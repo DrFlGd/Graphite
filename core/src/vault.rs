@@ -71,7 +71,21 @@ impl Vault {
     /// drop index rows for files that disappeared. Notes without an `id`
     /// get one written into their front-matter.
     pub fn sync(&mut self) -> Result<usize> {
-        let mut seen = Vec::new();
+        self.index.begin_batch()?;
+        match self.sync_inner() {
+            Ok(n) => {
+                self.index.end_batch()?;
+                Ok(n)
+            }
+            Err(e) => {
+                self.index.abort_batch();
+                Err(e)
+            }
+        }
+    }
+
+    fn sync_inner(&mut self) -> Result<usize> {
+        let mut seen = std::collections::HashSet::new();
         let mut changed = 0usize;
         for entry in WalkBuilder::new(&self.root)
             .hidden(true)
@@ -85,10 +99,10 @@ impl Vault {
                 continue;
             }
             let rel = self.rel(path)?;
-            seen.push(rel.clone());
             let meta = fs::metadata(path)?;
             let (mtime, size) = stat(&meta);
             if self.index.stat(&rel)? == Some((mtime, size)) {
+                seen.insert(rel);
                 continue;
             }
             if self.index_file(&rel).is_ok() {
@@ -96,6 +110,7 @@ impl Vault {
             } else {
                 tracing::warn!("skipping unreadable note {rel}");
             }
+            seen.insert(rel);
         }
         for stale in self.index.all_paths()? {
             if !seen.contains(&stale) {
