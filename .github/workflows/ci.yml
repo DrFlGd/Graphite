@@ -68,7 +68,11 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Build (no bundle)
         run: pnpm --filter @graphite/desktop tauri build --no-bundle
+      # Binaries only for pushes to main, kept briefly: artifact storage on the
+      # account is small, and a failed upload must not fail a green build.
       - name: Upload binary
+        if: github.event_name == 'push'
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: graphite-desktop-${{ matrix.os }}
@@ -76,3 +80,4 @@ jobs:
             target/release/graphite-desktop
             target/release/graphite-desktop.exe
           if-no-files-found: ignore
+          retention-days: 7
