@@ -1,0 +1,25 @@
+[package]
+name = "graphite-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Graphite core: vault model, index, search, links"
+
+[dependencies]
+anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+rusqlite.workspace = true
+ulid.workspace = true
+ignore.workspace = true
+regex.workspace = true
+chrono.workspace = true
+notify.workspace = true
+notify-debouncer-mini.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
