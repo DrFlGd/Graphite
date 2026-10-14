@@ -84,6 +84,16 @@ Tasks are GFM task-list items: `- [ ] text` / `- [x] text`. Inline fields on the
 
 Standard syntax with a vault-relative path: `![alt](attachments/Garden Robot/chassis.png)`. Paths are relative to the vault root, use `/`, and never start with `/` or contain `..`.
 
+### Captures and daily notes
+
+Quick capture (global shortcut, CLI `graphite capture`, phone share sheet in M4) writes a plain note; nothing about it is special beyond where it lands:
+
+- The note goes in `notes/Inbox/` with `type: capture` and a title of the form `2026-10-14 2130 <first line>` (first line of the text, or the URL's host and path, or the first attachment's name). Users rename and move it when they file it; the id keeps links intact.
+- A capture whose text is a single URL records it as the `source` property so later importers (M3) can pick it up.
+- Files dropped or pasted into a capture are copied to `attachments/Inbox/` (never moved) and referenced from the body: images as `![name](attachments/Inbox/name.png)`, everything else as `[name](attachments/Inbox/name.pdf)`. Name clashes get a `-2`, `-3` suffix.
+
+Daily notes live at `notes/Daily/YYYY-MM-DD.md` with `type: daily` and the date as title. Opening "today" creates the file if it does not exist and never overwrites it.
+
 ## File names
 
 New notes are written as `<folder>/<Title>.md`, with characters that are illegal on any supported OS replaced (`/ \ : * ? " < > | # ^ [ ]`) and whitespace collapsed. If the name is taken, creation fails (the UI asks for another title) rather than silently suffixing.

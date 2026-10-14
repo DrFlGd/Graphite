@@ -48,7 +48,14 @@ enum Cmd {
         stdin: bool,
     },
     /// Quick capture into the inbox: `graphite capture "a thought"` or pipe text in
-    Capture { text: Vec<String> },
+    Capture {
+        text: Vec<String>,
+        /// Files to copy into attachments/ and link from the capture
+        #[arg(long = "file", short = 'f')]
+        files: Vec<PathBuf>,
+    },
+    /// Open (create if needed) today's daily note and print its path
+    Daily,
     /// Print a note (by id, title, alias or path)
     Show { target: String },
     /// Notes linking to a note
@@ -118,17 +125,20 @@ fn run() -> Result<()> {
                 println!("{}\t{}", note.id, note.path);
             }
         }
-        Cmd::Capture { text } => {
+        Cmd::Capture { text, files } => {
             let mut body = text.join(" ");
-            if body.is_empty() {
+            if body.is_empty() && files.is_empty() {
                 std::io::stdin().read_to_string(&mut body)?;
             }
-            let body = body.trim().to_string();
-            anyhow::ensure!(!body.is_empty(), "nothing to capture");
-            let title = capture_title(&body);
-            let mut note = vault.create(&title, Some("capture"), Some("notes/Inbox"))?;
-            note.body = body;
-            let note = vault.write(&note)?;
+            let mut attachments = Vec::new();
+            for f in &files {
+                attachments.push(vault.import_attachment(f, Some("attachments/Inbox"))?);
+            }
+            let note = vault.capture(&body, &attachments)?;
+            println!("{}\t{}", note.id, note.path);
+        }
+        Cmd::Daily => {
+            let note = vault.daily_note(chrono::Local::now().date_naive())?;
             println!("{}\t{}", note.id, note.path);
         }
         Cmd::Show { target } => {
@@ -165,43 +175,4 @@ fn resolve(vault: &Vault, target: &str) -> Result<String> {
     vault
         .resolve(target)?
         .with_context(|| format!("no note matches '{target}'"))
-}
-
-/// First line of the capture, trimmed to a file-name-sized title, with a
-/// timestamp so captures never collide.
-fn capture_title(body: &str) -> String {
-    let first = body.lines().next().unwrap_or("").trim_start_matches('#').trim();
-    let short: String = first.chars().take(48).collect();
-    let stamp = chrono_stamp();
-    if short.is_empty() {
-        stamp
-    } else {
-        format!("{stamp} {short}")
-    }
-}
-
-fn chrono_stamp() -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    // yyyy-mm-dd hhmm without pulling chrono into the CLI.
-    let days = now / 86_400;
-    let secs = now % 86_400;
-    let (y, m, d) = civil_from_days(days as i64);
-    format!("{y:04}-{m:02}-{d:02} {:02}{:02}", secs / 3600, (secs % 3600) / 60)
-}
-
-// Howard Hinnant's days-to-civil algorithm.
-fn civil_from_days(z: i64) -> (i64, u32, u32) {
-    let z = z + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = (z - era * 146_097) as u64;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe as i64 + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    (if m <= 2 { y + 1 } else { y }, m, d)
 }

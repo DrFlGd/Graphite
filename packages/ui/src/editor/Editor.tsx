@@ -1,3 +1,4 @@
+import type { Editor } from '@tiptap/core'
 import { EditorContent, useEditor } from '@tiptap/react'
 import { useEffect, useMemo, useRef, type ReactNode } from 'react'
 import { buildExtensions } from './extensions'
@@ -21,6 +22,14 @@ export interface NoteEditorProps {
   /** Rendered at the right end of the toolbar. */
   toolbarTrailing?: ReactNode
   autofocus?: boolean
+  /** Called with the editor instance once it exists (and again per `docKey`). */
+  onReady?: (editor: Editor) => void
+  /**
+   * Files pasted (or dropped, outside Tauri) into the editor. The host copies
+   * them into the vault and calls `insertAttachments` with the result. `pos`
+   * is the document position of a drop, if known.
+   */
+  onFiles?: (files: File[], pos?: number) => void
 }
 
 /**
@@ -29,11 +38,11 @@ export interface NoteEditorProps {
  * out (ADR-005).
  */
 export function NoteEditor(props: NoteEditorProps) {
-  const { markdown, docKey, onChange, onFollowLink, searchNotes, resolveSrc, blockContext, placeholder, editable = true, toolbarTrailing, autofocus } = props
+  const { markdown, docKey, onChange, onFollowLink, searchNotes, resolveSrc, blockContext, placeholder, editable = true, toolbarTrailing, autofocus, onReady, onFiles } = props
   const lastEmitted = useRef<string>(markdown)
   const context = useMemo<BlockContext>(() => blockContext ?? {}, [blockContext])
-  const callbacks = useRef({ onChange, onFollowLink, searchNotes })
-  callbacks.current = { onChange, onFollowLink, searchNotes }
+  const callbacks = useRef({ onChange, onFollowLink, searchNotes, onReady, onFiles })
+  callbacks.current = { onChange, onFollowLink, searchNotes, onReady, onFiles }
 
   const extensions = useMemo(
     () =>
@@ -76,6 +85,21 @@ export function NoteEditor(props: NoteEditorProps) {
           }
           return false
         },
+        handlePaste: (_view, event) => {
+          const files = Array.from(event.clipboardData?.files ?? [])
+          if (files.length === 0 || !callbacks.current.onFiles) return false
+          event.preventDefault()
+          callbacks.current.onFiles(files)
+          return true
+        },
+        handleDrop: (view, event) => {
+          const files = Array.from(event.dataTransfer?.files ?? [])
+          if (files.length === 0 || !callbacks.current.onFiles) return false
+          event.preventDefault()
+          const pos = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos
+          callbacks.current.onFiles(files, pos)
+          return true
+        },
       },
       onUpdate: ({ editor: e }) => {
         const md = e.getMarkdown()
@@ -99,6 +123,10 @@ export function NoteEditor(props: NoteEditorProps) {
   useEffect(() => {
     if (editor && !editor.isDestroyed) editor.setEditable(editable)
   }, [editable, editor])
+
+  useEffect(() => {
+    if (editor && !editor.isDestroyed) callbacks.current.onReady?.(editor)
+  }, [editor])
 
   if (!editor) return null
   return (

@@ -16,12 +16,29 @@
         "width": 1280,
         "height": 800,
         "minWidth": 720,
-        "minHeight": 480
+        "minHeight": 480,
+        "label": "main"
+      },
+      {
+        "label": "capture",
+        "title": "Quick capture",
+        "url": "index.html#capture",
+        "width": 640,
+        "height": 300,
+        "visible": false,
+        "alwaysOnTop": true,
+        "decorations": false,
+        "resizable": false,
+        "center": true,
+        "skipTaskbar": true
       }
     ],
     "security": {
       "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost data: blob:; media-src 'self' asset: http://asset.localhost; style-src 'self' 'unsafe-inline'; font-src 'self' data:",
-      "assetProtocol": { "enable": true, "scope": [] }
+      "assetProtocol": {
+        "enable": true,
+        "scope": []
+      }
     }
   },
   "bundle": {

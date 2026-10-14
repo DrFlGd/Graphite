@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react'
-import { NoteEditor, ToolButton, type NoteCandidate } from '@graphite/ui'
+import { NoteEditor, ToolButton, type Editor, type NoteCandidate } from '@graphite/ui'
 import { FileCode2, Trash2 } from 'lucide-react'
 import { api, type Note } from '../api'
 
@@ -11,9 +11,11 @@ interface Props {
   onDelete: () => void
   resolveSrc?: (src: string) => string
   pickImage: () => Promise<string | null>
+  onEditorReady?: (editor: Editor) => void
+  onFiles?: (files: File[], pos?: number) => void
 }
 
-export function NotePane({ note, saveState, onChange, onFollowLink, onDelete, resolveSrc, pickImage }: Props) {
+export function NotePane({ note, saveState, onChange, onFollowLink, onDelete, resolveSrc, pickImage, onEditorReady, onFiles }: Props) {
   const [raw, setRaw] = useState(false)
 
   const searchNotes = useCallback(async (q: string): Promise<NoteCandidate[]> => {
@@ -62,6 +64,8 @@ export function NotePane({ note, saveState, onChange, onFollowLink, onDelete, re
           searchNotes={searchNotes}
           resolveSrc={resolveSrc}
           blockContext={{ pickImage }}
+          onReady={onEditorReady}
+          onFiles={onFiles}
           autofocus
           toolbarTrailing={
             <ToolButton label="Markdown source" onClick={() => setRaw(true)}>
