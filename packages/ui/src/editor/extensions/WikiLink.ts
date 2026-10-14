@@ -1,4 +1,4 @@
-import { Node, mergeAttributes } from '@tiptap/core'
+import { Node, mergeAttributes, nodeInputRule } from '@tiptap/core'
 
 export interface WikiLinkAttrs {
   target: string
@@ -80,6 +80,19 @@ export const WikiLink = Node.create({
 
   renderText({ node }) {
     return wikiLinkToMarkdown(node.attrs as WikiLinkAttrs)
+  },
+
+  // Typing `[[Title]]` by hand (ignoring the autocomplete) becomes a chip the
+  // moment the closing `]]` lands, so it is saved as a link, not escaped text.
+  addInputRules() {
+    return [
+      nodeInputRule({
+        // No capture group: nodeInputRule would otherwise keep the brackets as text around the node.
+        find: /\[\[[^[\]\n]+?\]\]$/,
+        type: this.type,
+        getAttributes: (match) => parseWikiInner(match[0].slice(2, -2)),
+      }),
+    ]
   },
 
   markdownTokenizer: {

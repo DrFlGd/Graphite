@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Graphite editor harness</title>
+    <style>
+      body { margin: 0; font-family: system-ui, sans-serif; background: var(--gr-bg); color: var(--gr-fg); }
+      #root { display: grid; grid-template-columns: 1fr 1fr; height: 100vh; }
+      .harness-editor { min-height: 0; border-right: 1px solid var(--gr-border); }
+      .harness-md { margin: 0; padding: 16px; overflow: auto; font: 13px/1.5 ui-monospace, monospace; white-space: pre-wrap; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/dev/main.tsx"></script>
+  </body>
+</html>
