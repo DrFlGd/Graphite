@@ -66,8 +66,19 @@ mod tests {
         std::thread::sleep(Duration::from_millis(200));
         std::fs::write(dir.path().join(STATE_DIR).join("index.sqlite"), "x").unwrap();
         std::fs::write(dir.path().join("note.md"), "hello").unwrap();
-        let ev = rx.recv_timeout(Duration::from_secs(5)).expect("watcher event");
-        assert!(ev.paths.iter().any(|p| p.ends_with("note.md")));
-        assert!(!ev.paths.iter().any(|p| p.to_string_lossy().contains(STATE_DIR)));
+        // The OS may deliver the change in more than one batch (FSEvents on
+        // macOS does), so collect until the note shows up.
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let mut seen_note = false;
+        while !seen_note {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            let ev = rx.recv_timeout(remaining).expect("watcher event with note.md");
+            assert!(
+                !ev.paths.iter().any(|p| p.to_string_lossy().contains(STATE_DIR)),
+                "state dir leaked into {:?}",
+                ev.paths
+            );
+            seen_note = ev.paths.iter().any(|p| p.ends_with("note.md"));
+        }
     }
 }
