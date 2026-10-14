@@ -1,41 +1,50 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
-import { CalendarDays, FilePlus2, FolderOpen, Inbox, Locate, RefreshCw, Search, Trash2, Waypoints, Zap } from 'lucide-react'
+import { CalendarDays, Columns2, FilePlus2, FolderOpen, Inbox, Locate, RefreshCw, Search, Trash2, Waypoints, X, Zap } from 'lucide-react'
 import { insertAttachments, type AttachmentItem, type Editor } from '@graphite/ui'
-import { api, assetUrl, fileToBase64, INBOX_DIR, type Note, type NoteSummary, type VaultInfo } from './api'
+import { api, assetUrl, INBOX_DIR, type Note, type NoteSummary, type VaultInfo } from './api'
 import { Sidebar } from './components/Sidebar'
-import { NotePane } from './components/NotePane'
+import { NoteTab } from './components/NoteTab'
+import { Pane } from './components/Pane'
 import { InboxView } from './components/InboxView'
 import { ContextPanel } from './components/ContextPanel'
 import { GraphView, type GraphMode } from './components/GraphView'
 import { Palette, type Command, type PaletteMode } from './components/Palette'
 import { Welcome } from './components/Welcome'
+import * as L from './layout'
 
 const LAST_VAULT_KEY = 'graphite.lastVault'
-const SAVE_DELAY_MS = 400
+const layoutKey = (root: string) => `graphite.layout:${root}`
 
 export function App() {
   const [vault, setVault] = useState<VaultInfo | null>(null)
   const [notes, setNotes] = useState<NoteSummary[]>([])
-  const [current, setCurrent] = useState<Note | null>(null)
-  const [palette, setPalette] = useState<PaletteMode | null>(null)
-  const [view, setView] = useState<'note' | 'inbox' | 'graph'>('note')
+  const [layout, setLayout] = useState<L.Layout>(() => L.emptyLayout())
+  /** The note shown in the active pane's active tab, as its editor has it. */
+  const [activeNote, setActiveNote] = useState<Note | null>(null)
+  /** The last note that was active anywhere; the graph centres on it. */
+  const [lastNote, setLastNote] = useState<Note | null>(null)
   const [graphMode, setGraphMode] = useState<GraphMode>('global')
+  const [palette, setPalette] = useState<{ mode: PaletteMode; newTab: boolean } | null>(null)
+  const [error, setError] = useState<string | null>(null)
   /** Bumped when notes change so views that derive from the index refetch. */
   const [version, setVersion] = useState(0)
-  const [error, setError] = useState<string | null>(null)
-  const [saveState, setSaveState] = useState<'saved' | 'dirty' | 'saving'>('saved')
-  const pending = useRef<{ timer: number | null; note: Note | null }>({ timer: null, note: null })
-  /** The live editor of the open note, for inserting dropped/pasted files. */
-  const editorRef = useRef<Editor | null>(null)
+  const [changed, setChanged] = useState<{ ids: string[]; seq: number }>({ ids: [], seq: 0 })
+  const [saved, setSaved] = useState<Note | null>(null)
+  const activeEditor = useRef<Editor | null>(null)
+  const layoutRef = useRef(layout)
+  layoutRef.current = layout
 
   const refreshList = useCallback(async () => {
     try {
-      setNotes(await api.listNotes())
+      const list = await api.listNotes()
+      setNotes(list)
       setVersion((v) => v + 1)
+      return list
     } catch (e) {
       setError(String(e))
+      return null
     }
   }, [])
 
@@ -49,8 +58,17 @@ export function App() {
         } catch {
           /* private mode */
         }
-        setCurrent(null)
-        await refreshList()
+        setActiveNote(null)
+        setLastNote(null)
+        const list = await refreshList()
+        let restored: L.Layout | null = null
+        try {
+          restored = L.parseLayout(JSON.parse(localStorage.getItem(layoutKey(info.root)) ?? 'null'))
+        } catch {
+          /* ignore */
+        }
+        const ids = new Set((list ?? []).map((n) => n.id))
+        setLayout(restored ? L.dropNotes(restored, (id) => ids.has(id)) : L.emptyLayout())
         setError(null)
       } catch (e) {
         setError(String(e))
@@ -70,102 +88,125 @@ export function App() {
     if (last) void openVault(last)
   }, [openVault])
 
-  const flushSave = useCallback(async () => {
-    const p = pending.current
-    if (p.timer) {
-      window.clearTimeout(p.timer)
-      p.timer = null
-    }
-    const note = p.note
-    p.note = null
-    if (!note) return
-    setSaveState('saving')
+  // Remember the tabs per vault.
+  useEffect(() => {
+    if (!vault) return
     try {
-      const saved = await api.saveNote(note)
-      setCurrent((c) => (c && c.id === saved.id && !pending.current.note ? { ...c, updated: saved.updated, created: saved.created } : c))
-      setSaveState(pending.current.note ? 'dirty' : 'saved')
-      void refreshList()
+      localStorage.setItem(layoutKey(vault.root), JSON.stringify(layout))
+    } catch {
+      /* ignore */
+    }
+  }, [layout, vault])
+
+  // When the active tab is not a note, nothing is "the active note".
+  const active = L.activeTab(layout)
+  useEffect(() => {
+    if (active.kind !== 'note') {
+      setActiveNote(null)
+      activeEditor.current = null
+    }
+  }, [active])
+
+  const openNote = useCallback((id: string, newTab = false) => {
+    setLayout((l) => L.open(l, { kind: 'note', noteId: id }, newTab))
+  }, [])
+
+  const openInbox = useCallback((newTab = false) => setLayout((l) => L.open(l, { kind: 'inbox' }, newTab)), [])
+
+  const showGraph = useCallback((mode: GraphMode, newTab = false) => {
+    setGraphMode(mode)
+    setLayout((l) => L.open(l, { kind: 'graph' }, newTab))
+  }, [])
+
+  const openToday = useCallback(async () => {
+    try {
+      const note = await api.dailyNote()
+      await refreshList()
+      openNote(note.id)
     } catch (e) {
       setError(String(e))
-      setSaveState('dirty')
     }
-  }, [refreshList])
+  }, [openNote, refreshList])
 
-  const scheduleSave = useCallback(
-    (note: Note) => {
-      pending.current.note = note
-      setSaveState('dirty')
-      if (pending.current.timer) window.clearTimeout(pending.current.timer)
-      pending.current.timer = window.setTimeout(() => void flushSave(), SAVE_DELAY_MS)
+  const createNote = useCallback(
+    async (title: string, noteType?: string) => {
+      try {
+        const note = await api.createNote(title, noteType)
+        await refreshList()
+        openNote(note.id)
+        return note
+      } catch (e) {
+        setError(String(e))
+        return null
+      }
     },
-    [flushSave],
+    [openNote, refreshList],
   )
 
-  const openNote = useCallback(
-    async (id: string) => {
-      await flushSave()
+  const followLink = useCallback(
+    async (target: string) => {
       try {
-        const note = await api.readNote(id)
-        setCurrent(note)
-        setView('note')
+        const id = await api.followLink(target)
+        await refreshList()
+        openNote(id)
       } catch (e) {
         setError(String(e))
       }
     },
-    [flushSave],
+    [openNote, refreshList],
   )
 
-  const openInbox = useCallback(async () => {
-    await flushSave()
-    setView('inbox')
-  }, [flushSave])
-
-  const showGraph = useCallback(
-    async (mode: GraphMode) => {
-      await flushSave()
-      setGraphMode(mode)
-      setView('graph')
+  const deleteNote = useCallback(
+    async (note: Note) => {
+      if (!window.confirm(`Delete "${note.title}"? The file is removed from the vault.`)) return
+      try {
+        await api.deleteNote(note.id)
+        setLayout((l) => L.dropNotes(l, (id) => id !== note.id))
+        await refreshList()
+      } catch (e) {
+        setError(String(e))
+      }
     },
-    [flushSave],
+    [refreshList],
   )
 
-  const openToday = useCallback(async () => {
-    await flushSave()
-    try {
-      const note = await api.dailyNote()
-      await refreshList()
-      setCurrent(note)
-      setView('note')
-    } catch (e) {
-      setError(String(e))
-    }
-  }, [flushSave, refreshList])
+  // Notes changed on disk by something else (or the capture window).
+  useEffect(() => {
+    if (!vault) return
+    let unlisten: (() => void) | undefined
+    void api
+      .onVaultChanged((ids) => {
+        setChanged((c) => ({ ids, seq: c.seq + 1 }))
+        void refreshList().then((list) => {
+          if (!list) return
+          const have = new Set(list.map((n) => n.id))
+          setLayout((l) => L.dropNotes(l, (id) => have.has(id)))
+        })
+      })
+      .then((u) => {
+        unlisten = u
+      })
+    return () => unlisten?.()
+  }, [vault, refreshList])
 
   // The capture window asked us to show a note it just saved.
   useEffect(() => {
     if (!vault) return
     let unlisten: (() => void) | undefined
-    void api.onOpenNote((id) => void openNote(id)).then((u) => {
+    void api.onOpenNote((id) => openNote(id)).then((u) => {
       unlisten = u
     })
     return () => unlisten?.()
   }, [vault, openNote])
 
-  /** Copy files into the vault and put them into the open note. */
-  const addFiles = useCallback(async (items: AttachmentItem[], pos?: number) => {
-    const editor = editorRef.current
-    if (!editor || editor.isDestroyed || items.length === 0) return
-    insertAttachments(editor, items, pos)
-  }, [])
-
-  // Files dropped onto the window (Tauri hands us paths, not File objects).
+  // Files dropped onto the window go into the active note's editor.
   useEffect(() => {
     if (!vault) return
     let unlisten: (() => void) | undefined
     void getCurrentWebview()
       .onDragDropEvent(async (e) => {
         if (e.payload.type !== 'drop') return
-        const editor = editorRef.current
+        const editor = activeEditor.current
         if (!editor || editor.isDestroyed) return
         const items: AttachmentItem[] = []
         for (const p of e.payload.paths) {
@@ -178,129 +219,18 @@ export function App() {
         }
         const scale = window.devicePixelRatio || 1
         const pos = editor.view.posAtCoords({ left: e.payload.position.x / scale, top: e.payload.position.y / scale })?.pos
-        await addFiles(items, pos)
+        insertAttachments(editor, items, pos)
       })
       .then((u) => {
         unlisten = u
       })
     return () => unlisten?.()
-  }, [vault, addFiles])
-
-  // Files pasted into the editor arrive as File objects: store their bytes.
-  const onPastedFiles = useCallback(
-    async (files: File[], pos?: number) => {
-      const items: AttachmentItem[] = []
-      for (const f of files) {
-        const ext = f.type.split('/')[1] || 'bin'
-        const name = !f.name || f.name === 'image.png' ? `pasted-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.${ext}` : f.name
-        try {
-          const src = await api.attachData(name, await fileToBase64(f))
-          items.push({ src, name })
-        } catch (err) {
-          setError(String(err))
-        }
-      }
-      await addFiles(items, pos)
-    },
-    [addFiles],
-  )
-
-  // Notes changed on disk by something else: refresh the list and reload the open note.
-  useEffect(() => {
-    if (!vault) return
-    let unlisten: (() => void) | undefined
-    void api.onVaultChanged((ids) => {
-      void refreshList()
-      const cur = current?.id
-      if (cur && ids.includes(cur) && !pending.current.note) {
-        void api.readNote(cur).then(setCurrent).catch(() => {})
-      }
-    }).then((u) => {
-      unlisten = u
-    })
-    return () => unlisten?.()
-  }, [vault, current?.id, refreshList])
+  }, [vault])
 
   const pickVault = useCallback(async () => {
     const dir = await openDialog({ directory: true, multiple: false, title: 'Open or create a vault folder' })
     if (typeof dir === 'string') await openVault(dir)
   }, [openVault])
-
-  const createNote = useCallback(
-    async (title: string, noteType?: string) => {
-      try {
-        const note = await api.createNote(title, noteType)
-        await refreshList()
-        setCurrent(note)
-        return note
-      } catch (e) {
-        setError(String(e))
-        return null
-      }
-    },
-    [refreshList],
-  )
-
-  const followLink = useCallback(
-    async (target: string) => {
-      try {
-        const id = await api.followLink(target)
-        await refreshList()
-        await openNote(id)
-      } catch (e) {
-        setError(String(e))
-      }
-    },
-    [openNote, refreshList],
-  )
-
-  const deleteCurrent = useCallback(async () => {
-    if (!current) return
-    if (!window.confirm(`Delete "${current.title}"? The file is removed from the vault.`)) return
-    pending.current.note = null
-    try {
-      await api.deleteNote(current.id)
-      setCurrent(null)
-      await refreshList()
-    } catch (e) {
-      setError(String(e))
-    }
-  }, [current, refreshList])
-
-  // Keyboard: Ctrl/Cmd+K search, Ctrl/Cmd+Shift+P commands, Ctrl/Cmd+N new note,
-  // Ctrl/Cmd+D today, Ctrl/Cmd+Shift+G graph, Ctrl/Cmd+S flush.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const mod = e.ctrlKey || e.metaKey
-      if (!mod || e.altKey) return
-      const key = e.key.toLowerCase()
-      if (e.shiftKey && key === 'p') {
-        e.preventDefault()
-        setPalette('commands')
-      } else if (e.shiftKey && key === 'g') {
-        e.preventDefault()
-        void showGraph(current && view !== 'graph' ? 'local' : 'global')
-      } else if (e.shiftKey) {
-        return
-      } else if (key === 'k' || key === 'p') {
-        e.preventDefault()
-        setPalette('notes')
-      } else if (key === 'n') {
-        e.preventDefault()
-        void createNote(`Untitled ${new Date().toLocaleString()}`)
-      } else if (key === 'd') {
-        e.preventDefault()
-        void openToday()
-      } else if (key === 's') {
-        e.preventDefault()
-        void flushSave()
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [createNote, flushSave, openToday, showGraph, current, view])
-
-  const resolveSrc = useMemo(() => (vault ? (src: string) => assetUrl(vault.root, src) : undefined), [vault])
 
   const pickImage = useCallback(async () => {
     const file = await openDialog({ multiple: false, directory: false, title: 'Insert image', filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'] }] })
@@ -313,80 +243,154 @@ export function App() {
     }
   }, [])
 
+  const resolveSrc = useMemo(() => (vault ? (src: string) => assetUrl(vault.root, src) : undefined), [vault])
+
+  // Keyboard shortcuts for the whole window.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey
+      if (!mod || e.altKey) return
+      const key = e.key.toLowerCase()
+      const act = (f: () => void) => {
+        e.preventDefault()
+        f()
+      }
+      if (e.shiftKey) {
+        if (key === 'p') act(() => setPalette({ mode: 'commands', newTab: false }))
+        else if (key === 'g') act(() => showGraph(lastNote && active.kind !== 'graph' ? 'local' : 'global'))
+        else if (key === 'tab') act(() => setLayout((l) => L.cycleTab(l, -1)))
+        return
+      }
+      if (key === 'k' || key === 'p') act(() => setPalette({ mode: 'notes', newTab: false }))
+      else if (key === 't') act(() => setPalette({ mode: 'notes', newTab: true }))
+      else if (key === 'w') act(() => setLayout(L.closeActiveTab))
+      else if (key === 'tab') act(() => setLayout((l) => L.cycleTab(l, 1)))
+      else if (key === '\\') act(() => setLayout(L.splitRight))
+      else if (key >= '1' && key <= '3') act(() => setLayout((l) => L.focusPane(l, Number(key) - 1)))
+      else if (key === 'n') act(() => void createNote(`Untitled ${new Date().toLocaleString()}`))
+      else if (key === 'd') act(() => void openToday())
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [createNote, openToday, showGraph, lastNote, active.kind])
+
   const commands = useMemo<Command[]>(
     () => [
-      { id: 'search', label: 'Search notes', shortcut: 'Ctrl+K', icon: <Search size={16} />, run: () => setPalette('notes') },
+      { id: 'search', label: 'Search notes', shortcut: 'Ctrl+K', icon: <Search size={16} />, run: () => setPalette({ mode: 'notes', newTab: false }) },
       { id: 'new', label: 'New note', shortcut: 'Ctrl+N', icon: <FilePlus2 size={16} />, run: () => void createNote(`Untitled ${new Date().toLocaleString()}`) },
       { id: 'today', label: "Open today's daily note", shortcut: 'Ctrl+D', icon: <CalendarDays size={16} />, keywords: 'daily journal', run: () => void openToday() },
-      { id: 'inbox', label: 'Show inbox', icon: <Inbox size={16} />, keywords: 'triage captures', run: () => void openInbox() },
-      { id: 'graph', label: 'Show graph of the whole vault', shortcut: 'Ctrl+Shift+G', icon: <Waypoints size={16} />, keywords: 'links network', run: () => void showGraph('global') },
-      ...(current ? [{ id: 'graph-local', label: `Show graph around “${current.title}”`, icon: <Locate size={16} />, keywords: 'local links', run: () => void showGraph('local') }] : []),
+      { id: 'inbox', label: 'Show inbox', icon: <Inbox size={16} />, keywords: 'triage captures', run: () => openInbox() },
+      { id: 'graph', label: 'Show graph of the whole vault', shortcut: 'Ctrl+Shift+G', icon: <Waypoints size={16} />, keywords: 'links network', run: () => showGraph('global') },
+      ...(lastNote ? [{ id: 'graph-local', label: `Show graph around “${lastNote.title}”`, icon: <Locate size={16} />, keywords: 'local links', run: () => showGraph('local') }] : []),
+      { id: 'tab-new', label: 'Open a note in a new tab', shortcut: 'Ctrl+T', keywords: 'tab', run: () => setPalette({ mode: 'notes', newTab: true }) },
+      { id: 'tab-close', label: 'Close tab', shortcut: 'Ctrl+W', icon: <X size={16} />, run: () => setLayout(L.closeActiveTab) },
+      { id: 'split', label: 'Split pane to the right', shortcut: 'Ctrl+\\', icon: <Columns2 size={16} />, keywords: 'side by side columns', run: () => setLayout(L.splitRight) },
       { id: 'capture', label: 'Quick capture', shortcut: 'Ctrl+Shift+Space', icon: <Zap size={16} />, keywords: 'inbox thought', run: () => void api.toggleCaptureWindow() },
-      ...(current ? [{ id: 'delete', label: `Delete “${current.title}”`, icon: <Trash2 size={16} />, run: () => void deleteCurrent() }] : []),
+      ...(activeNote ? [{ id: 'delete', label: `Delete “${activeNote.title}”`, icon: <Trash2 size={16} />, run: () => void deleteNote(activeNote) }] : []),
       { id: 'vault', label: 'Open another vault folder', icon: <FolderOpen size={16} />, keywords: 'switch', run: () => void pickVault() },
       { id: 'reindex', label: 'Rebuild the search index', icon: <RefreshCw size={16} />, keywords: 'reindex repair', run: () => void api.rebuildIndex().then(refreshList).catch((e) => setError(String(e))) },
     ],
-    [createNote, openToday, openInbox, showGraph, current, deleteCurrent, pickVault, refreshList],
+    [createNote, openToday, openInbox, showGraph, lastNote, activeNote, deleteNote, pickVault, refreshList],
   )
 
   if (!vault) return <Welcome onPick={pickVault} error={error} />
 
   const inboxCount = notes.filter((n) => n.path.startsWith(INBOX_DIR + '/')).length
-  const showNote = view === 'note' && current !== null
+  const showContext = active.kind === 'note' && activeNote !== null
 
-  return (
-    <div className={`app ${showNote ? '' : 'app--no-context'}`}>
-      <Sidebar
-        vault={vault}
-        notes={notes}
-        currentId={showNote ? current.id : null}
-        onOpen={openNote}
-        onCreate={createNote}
-        onPickVault={pickVault}
-        onSearch={() => setPalette('notes')}
-        inboxCount={inboxCount}
-        inboxOpen={view === 'inbox'}
-        graphOpen={view === 'graph'}
-        onInbox={() => void openInbox()}
-        onToday={() => void openToday()}
-        onGraph={() => void showGraph(graphMode)}
-      />
-      <main className="app__main">
-        {view === 'inbox' ? (
-          <InboxView notes={notes} onOpen={(id) => void openNote(id)} onChanged={() => void refreshList()} onError={setError} />
-        ) : view === 'graph' ? (
-          <GraphView current={current} mode={graphMode} onModeChange={setGraphMode} version={version} onOpen={(id) => void openNote(id)} onCreate={(t) => void followLink(t)} onError={setError} />
-        ) : current ? (
-          <NotePane
-            key={current.id}
-            note={current}
-            saveState={saveState}
-            onChange={(n) => {
-              setCurrent(n)
-              scheduleSave(n)
+  const body = (tab: L.Tab, isActive: boolean) => {
+    switch (tab.kind) {
+      case 'note':
+        return (
+          <NoteTab
+            key={tab.id}
+            noteId={tab.noteId}
+            active={isActive}
+            changed={changed}
+            saved={saved}
+            onActiveNote={(n) => {
+              setActiveNote(n)
+              if (n) setLastNote(n)
             }}
-            onFollowLink={followLink}
-            onDelete={deleteCurrent}
+            onEditorReady={(ed) => {
+              activeEditor.current = ed
+            }}
+            onSaved={(n) => {
+              setSaved(n)
+              void refreshList()
+            }}
+            onFollowLink={(t) => void followLink(t)}
+            onDelete={(n) => void deleteNote(n)}
+            onError={setError}
             resolveSrc={resolveSrc}
             pickImage={pickImage}
-            onEditorReady={(ed) => {
-              editorRef.current = ed
-            }}
-            onFiles={(files, pos) => void onPastedFiles(files, pos)}
           />
-        ) : (
-          <div className="app__empty">
+        )
+      case 'inbox':
+        return <InboxView key={tab.id} notes={notes} onOpen={(id) => openNote(id)} onChanged={() => void refreshList()} onError={setError} />
+      case 'graph':
+        return <GraphView key={tab.id} current={lastNote} mode={graphMode} onModeChange={setGraphMode} version={version} onOpen={(id) => openNote(id)} onCreate={(t) => void followLink(t)} onError={setError} />
+      default:
+        return (
+          <div key={tab.id} className="pane__empty">
             <p>
               Pick a note on the left, press <kbd>Ctrl</kbd>+<kbd>N</kbd> for a new one, <kbd>Ctrl</kbd>+<kbd>D</kbd> for today, <kbd>Ctrl</kbd>+<kbd>K</kbd> to search, or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> for every command.
-            </p>
-            <p>
+              <br />
               <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Space</kbd> anywhere captures a thought to the inbox.
             </p>
           </div>
-        )}
+        )
+    }
+  }
+
+  return (
+    <div className={`app ${showContext ? '' : 'app--no-context'}`}>
+      <Sidebar
+        vault={vault}
+        notes={notes}
+        currentId={active.kind === 'note' ? active.noteId : null}
+        onOpen={openNote}
+        onCreate={(t) => void createNote(t)}
+        onPickVault={pickVault}
+        onSearch={() => setPalette({ mode: 'notes', newTab: false })}
+        inboxCount={inboxCount}
+        inboxOpen={active.kind === 'inbox'}
+        graphOpen={active.kind === 'graph'}
+        onInbox={() => openInbox()}
+        onToday={() => void openToday()}
+        onGraph={() => showGraph(graphMode)}
+      />
+      <main className="panes">
+        {layout.panes.map((pane, pi) => {
+          const paneActive = pi === layout.active
+          return (
+            <Pane
+              key={pane.id}
+              pane={pane}
+              active={paneActive}
+              notes={notes}
+              canSplit={layout.panes.length < L.MAX_PANES}
+              onFocus={() => setLayout((l) => L.focusPane(l, pi))}
+              onSelect={(ti) => setLayout((l) => L.selectTab(l, pi, ti))}
+              onClose={(ti) => setLayout((l) => L.closeTab(l, pi, ti))}
+              onNewTab={() => setPalette({ mode: 'notes', newTab: true })}
+              onSplit={() => setLayout((l) => L.splitRight(L.focusPane(l, pi)))}
+            >
+              {body(pane.tabs[pane.active], paneActive)}
+            </Pane>
+          )
+        })}
       </main>
-      {showNote && <ContextPanel note={current} onOpen={openNote} onFollowLink={followLink} onShowGraph={() => void showGraph('local')} />}
-      {palette && <Palette mode={palette} commands={commands} onClose={() => setPalette(null)} onOpen={(id) => void openNote(id)} onCreate={(t) => void createNote(t)} />}
+      {showContext && <ContextPanel note={activeNote} onOpen={(id) => openNote(id)} onFollowLink={(t) => void followLink(t)} onShowGraph={() => showGraph('local', true)} />}
+      {palette && (
+        <Palette
+          mode={palette.mode}
+          commands={commands}
+          onClose={() => setPalette(null)}
+          onOpen={(id, newTab) => openNote(id, newTab || palette.newTab)}
+          onCreate={(t) => void createNote(t)}
+        />
+      )}
       {error && (
         <div className="app__error" role="alert" onClick={() => setError(null)}>
           {error}

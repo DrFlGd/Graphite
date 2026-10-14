@@ -6,7 +6,7 @@ Your data is a folder of Markdown notes and attachments ([vault format](docs/spe
 
 ## Status
 
-Milestone **M0 (foundations)** and the capture half of **M1**: a desktop app that opens a vault, lists notes, edits them in a rich Markdown editor with an insert toolbar and `/` menu, links notes with `[[`, shows backlinks and unlinked mentions, and searches the vault. `Ctrl/Cmd+Shift+Space` anywhere opens a quick-capture box that saves to the inbox (text, links, dropped or pasted files); an inbox view files captures into folders; files dropped or pasted into a note are copied into `attachments/` and linked; `Ctrl/Cmd+D` opens today's daily note. A graph view draws the whole vault or the neighbourhood of a note (typed links dashed, missing notes hollow), with a mini graph beside every note; `Ctrl/Cmd+Shift+P` opens a command palette that reaches every command. Plus a CLI over the same core.
+Milestone **M0 (foundations)** and the capture half of **M1**: a desktop app that opens a vault, lists notes, edits them in a rich Markdown editor with an insert toolbar and `/` menu, links notes with `[[`, shows backlinks and unlinked mentions, and searches the vault. `Ctrl/Cmd+Shift+Space` anywhere opens a quick-capture box that saves to the inbox (text, links, dropped or pasted files); an inbox view files captures into folders; files dropped or pasted into a note are copied into `attachments/` and linked; `Ctrl/Cmd+D` opens today's daily note. A graph view draws the whole vault or the neighbourhood of a note (typed links dashed, missing notes hollow), with a mini graph beside every note; `Ctrl/Cmd+Shift+P` opens a command palette that reaches every command. Notes open in tabs (Ctrl/Cmd+click for a new tab) and the window splits into up to three panes. Plus a CLI over the same core.
 
 ## Repository
 
@@ -36,7 +36,7 @@ GRAPHITE_VAULT=fixtures/sample-vault target/debug/graphite daily
 GRAPHITE_VAULT=fixtures/sample-vault target/debug/graphite graph --around "Garden Robot" --hops 2
 ```
 
-Open `fixtures/sample-vault` (or any folder) from the app's welcome screen. Shortcuts: `Ctrl/Cmd+Shift+Space` quick capture (works while the app is in the background), `Ctrl/Cmd+K` search, `Ctrl/Cmd+Shift+P` commands (or type `>` in search), `Ctrl/Cmd+N` new note, `Ctrl/Cmd+D` today's note, `Ctrl/Cmd+Shift+G` graph, `/` in a note for blocks, `[[` to link. Drop or paste files into a note to attach them.
+Open `fixtures/sample-vault` (or any folder) from the app's welcome screen. Shortcuts: `Ctrl/Cmd+Shift+Space` quick capture (works while the app is in the background), `Ctrl/Cmd+K` search, `Ctrl/Cmd+Shift+P` commands (or type `>` in search), `Ctrl/Cmd+N` new note, `Ctrl/Cmd+D` today's note, `Ctrl/Cmd+Shift+G` graph, `Ctrl/Cmd+T` open a note in a new tab, `Ctrl/Cmd+W` close tab, `Ctrl/Cmd+Tab` next tab, `Ctrl/Cmd+\` split the pane, `Ctrl/Cmd+1`-`3` focus a pane, `/` in a note for blocks, `[[` to link. Drop or paste files into a note to attach them.
 
 ## Licence
 
