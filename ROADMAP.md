@@ -1,6 +1,6 @@
 # Graphite Roadmap
 
-This is the top-level plan for Graphite. It is a proposal: every feature and milestone below has a **Decision** column that is meant to be filled in during review (`accept`, `cut`, `later`, or a note). Nothing is built until the feature set and milestone order are agreed.
+This is the top-level plan for Graphite. It was reviewed and accepted on 2026-10-14 (see `docs/plan/04-open-questions.md` for the answers and `docs/decisions/` for the ADRs). The **Decision** columns in the feature and milestone docs stay in place so individual items can still be accepted, cut or reprioritised as development proceeds.
 
 The detail behind each section lives in `docs/plan/`:
 

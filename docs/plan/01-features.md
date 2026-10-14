@@ -51,6 +51,8 @@ The brief's top priority: lower the barrier to getting things in.
 | C8 | **Note history**: per-note version history with diff and restore | P1 | M4 | added | |
 | C9 | **Decision log**: `decision` note type with context/options/outcome, listed per project | P1 | M2 | added | |
 | C10 | **Footnotes, callouts, math, Mermaid diagrams** | P2 | M5 | added | |
+| C11 | **Block insert toolbar and slash menu**: every block type (table, code block, embed, image, callout, task list, heading, divider, 3D/video/PDF embed) is addable from an icon toolbar, a `/` menu and a keyboard shortcut; block types are registered in one place so adding or changing one is a single module | P0 | M1 | brief | **accept** (Jerred: editor must be intuitive and robust; graphical/iconographic way to add tables, code blocks, embeds) |
+| C12 | **Block editing affordances**: drag handle per block, table cell toolbar (add/remove row/column, align), code block language picker, embed resize, convert-block-to-type menu | P0 | M1 | brief | **accept** |
 
 ## D · Projects and progress tracking
 

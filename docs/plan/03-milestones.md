@@ -32,12 +32,13 @@ No dates are attached. Once the feature set is agreed, each milestone gets broke
 
 **Goal:** a desktop notes app you would actually use: capture fast, link everything, see the connections.
 
-**Delivers:** A2, A3, A4, A5, B1, B2, B3, B4, B10, C1, C2, C3, C6 (title match), C7, G5 (basic), G10, G11, H1 (notes), J1, J6, L2.
+**Delivers:** A2, A3, A4, A5, B1, B2, B3, B4, B10, C1, C2, C3, C6 (title match), C7, C11, C12, G5 (basic), G10, G11, H1 (notes), J1, J6, L2.
 
 **Exit criteria:**
 - Open a vault folder; notes on disk appear; edits round-trip to disk; external edits show up live.
 - Global hotkey opens quick capture; text/URL/file lands in Inbox in one keystroke.
 - `[[` autocomplete, backlinks panel, unlinked mentions, create-note-on-link.
+- Every block type (table, code block, embed, image, callout, task list…) can be inserted from an icon toolbar, a `/` menu, or a shortcut; tables and code blocks have in-place editing controls.
 - Local graph view navigable; global graph renders a 1k-note vault smoothly.
 - Full-text search across notes under 100 ms on a 10k-note fixture.
 - Command palette reaches every command; split panes and tabs.
