@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
+import { CalendarDays, FilePlus2, FolderOpen, Inbox, Locate, RefreshCw, Search, Trash2, Waypoints, Zap } from 'lucide-react'
 import { insertAttachments, type AttachmentItem, type Editor } from '@graphite/ui'
 import { api, assetUrl, fileToBase64, INBOX_DIR, type Note, type NoteSummary, type VaultInfo } from './api'
 import { Sidebar } from './components/Sidebar'
 import { NotePane } from './components/NotePane'
 import { InboxView } from './components/InboxView'
 import { ContextPanel } from './components/ContextPanel'
-import { QuickSwitcher } from './components/QuickSwitcher'
+import { GraphView, type GraphMode } from './components/GraphView'
+import { Palette, type Command, type PaletteMode } from './components/Palette'
 import { Welcome } from './components/Welcome'
 
 const LAST_VAULT_KEY = 'graphite.lastVault'
@@ -17,8 +19,11 @@ export function App() {
   const [vault, setVault] = useState<VaultInfo | null>(null)
   const [notes, setNotes] = useState<NoteSummary[]>([])
   const [current, setCurrent] = useState<Note | null>(null)
-  const [switcherOpen, setSwitcherOpen] = useState(false)
-  const [view, setView] = useState<'note' | 'inbox'>('note')
+  const [palette, setPalette] = useState<PaletteMode | null>(null)
+  const [view, setView] = useState<'note' | 'inbox' | 'graph'>('note')
+  const [graphMode, setGraphMode] = useState<GraphMode>('global')
+  /** Bumped when notes change so views that derive from the index refetch. */
+  const [version, setVersion] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [saveState, setSaveState] = useState<'saved' | 'dirty' | 'saving'>('saved')
   const pending = useRef<{ timer: number | null; note: Note | null }>({ timer: null, note: null })
@@ -28,6 +33,7 @@ export function App() {
   const refreshList = useCallback(async () => {
     try {
       setNotes(await api.listNotes())
+      setVersion((v) => v + 1)
     } catch (e) {
       setError(String(e))
     }
@@ -113,6 +119,15 @@ export function App() {
     await flushSave()
     setView('inbox')
   }, [flushSave])
+
+  const showGraph = useCallback(
+    async (mode: GraphMode) => {
+      await flushSave()
+      setGraphMode(mode)
+      setView('graph')
+    },
+    [flushSave],
+  )
 
   const openToday = useCallback(async () => {
     await flushSave()
@@ -252,28 +267,38 @@ export function App() {
     }
   }, [current, refreshList])
 
-  // Keyboard: Ctrl/Cmd+K quick switcher, Ctrl/Cmd+N new note, Ctrl/Cmd+D today, Ctrl/Cmd+S flush.
+  // Keyboard: Ctrl/Cmd+K search, Ctrl/Cmd+Shift+P commands, Ctrl/Cmd+N new note,
+  // Ctrl/Cmd+D today, Ctrl/Cmd+Shift+G graph, Ctrl/Cmd+S flush.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey
       if (!mod || e.altKey) return
-      if (e.key === 'k' || e.key === 'p') {
+      const key = e.key.toLowerCase()
+      if (e.shiftKey && key === 'p') {
         e.preventDefault()
-        setSwitcherOpen(true)
-      } else if (e.key === 'n') {
+        setPalette('commands')
+      } else if (e.shiftKey && key === 'g') {
+        e.preventDefault()
+        void showGraph(current && view !== 'graph' ? 'local' : 'global')
+      } else if (e.shiftKey) {
+        return
+      } else if (key === 'k' || key === 'p') {
+        e.preventDefault()
+        setPalette('notes')
+      } else if (key === 'n') {
         e.preventDefault()
         void createNote(`Untitled ${new Date().toLocaleString()}`)
-      } else if (e.key === 'd') {
+      } else if (key === 'd') {
         e.preventDefault()
         void openToday()
-      } else if (e.key === 's') {
+      } else if (key === 's') {
         e.preventDefault()
         void flushSave()
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [createNote, flushSave, openToday])
+  }, [createNote, flushSave, openToday, showGraph, current, view])
 
   const resolveSrc = useMemo(() => (vault ? (src: string) => assetUrl(vault.root, src) : undefined), [vault])
 
@@ -287,6 +312,22 @@ export function App() {
       return null
     }
   }, [])
+
+  const commands = useMemo<Command[]>(
+    () => [
+      { id: 'search', label: 'Search notes', shortcut: 'Ctrl+K', icon: <Search size={16} />, run: () => setPalette('notes') },
+      { id: 'new', label: 'New note', shortcut: 'Ctrl+N', icon: <FilePlus2 size={16} />, run: () => void createNote(`Untitled ${new Date().toLocaleString()}`) },
+      { id: 'today', label: "Open today's daily note", shortcut: 'Ctrl+D', icon: <CalendarDays size={16} />, keywords: 'daily journal', run: () => void openToday() },
+      { id: 'inbox', label: 'Show inbox', icon: <Inbox size={16} />, keywords: 'triage captures', run: () => void openInbox() },
+      { id: 'graph', label: 'Show graph of the whole vault', shortcut: 'Ctrl+Shift+G', icon: <Waypoints size={16} />, keywords: 'links network', run: () => void showGraph('global') },
+      ...(current ? [{ id: 'graph-local', label: `Show graph around “${current.title}”`, icon: <Locate size={16} />, keywords: 'local links', run: () => void showGraph('local') }] : []),
+      { id: 'capture', label: 'Quick capture', shortcut: 'Ctrl+Shift+Space', icon: <Zap size={16} />, keywords: 'inbox thought', run: () => void api.toggleCaptureWindow() },
+      ...(current ? [{ id: 'delete', label: `Delete “${current.title}”`, icon: <Trash2 size={16} />, run: () => void deleteCurrent() }] : []),
+      { id: 'vault', label: 'Open another vault folder', icon: <FolderOpen size={16} />, keywords: 'switch', run: () => void pickVault() },
+      { id: 'reindex', label: 'Rebuild the search index', icon: <RefreshCw size={16} />, keywords: 'reindex repair', run: () => void api.rebuildIndex().then(refreshList).catch((e) => setError(String(e))) },
+    ],
+    [createNote, openToday, openInbox, showGraph, current, deleteCurrent, pickVault, refreshList],
+  )
 
   if (!vault) return <Welcome onPick={pickVault} error={error} />
 
@@ -302,15 +343,19 @@ export function App() {
         onOpen={openNote}
         onCreate={createNote}
         onPickVault={pickVault}
-        onSearch={() => setSwitcherOpen(true)}
+        onSearch={() => setPalette('notes')}
         inboxCount={inboxCount}
         inboxOpen={view === 'inbox'}
+        graphOpen={view === 'graph'}
         onInbox={() => void openInbox()}
         onToday={() => void openToday()}
+        onGraph={() => void showGraph(graphMode)}
       />
       <main className="app__main">
         {view === 'inbox' ? (
           <InboxView notes={notes} onOpen={(id) => void openNote(id)} onChanged={() => void refreshList()} onError={setError} />
+        ) : view === 'graph' ? (
+          <GraphView current={current} mode={graphMode} onModeChange={setGraphMode} version={version} onOpen={(id) => void openNote(id)} onCreate={(t) => void followLink(t)} onError={setError} />
         ) : current ? (
           <NotePane
             key={current.id}
@@ -332,7 +377,7 @@ export function App() {
         ) : (
           <div className="app__empty">
             <p>
-              Pick a note on the left, press <kbd>Ctrl</kbd>+<kbd>N</kbd> for a new one, <kbd>Ctrl</kbd>+<kbd>D</kbd> for today, or <kbd>Ctrl</kbd>+<kbd>K</kbd> to search.
+              Pick a note on the left, press <kbd>Ctrl</kbd>+<kbd>N</kbd> for a new one, <kbd>Ctrl</kbd>+<kbd>D</kbd> for today, <kbd>Ctrl</kbd>+<kbd>K</kbd> to search, or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> for every command.
             </p>
             <p>
               <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Space</kbd> anywhere captures a thought to the inbox.
@@ -340,8 +385,8 @@ export function App() {
           </div>
         )}
       </main>
-      {showNote && <ContextPanel note={current} onOpen={openNote} onFollowLink={followLink} />}
-      {switcherOpen && <QuickSwitcher onClose={() => setSwitcherOpen(false)} onOpen={(id) => void openNote(id)} onCreate={(t) => void createNote(t)} />}
+      {showNote && <ContextPanel note={current} onOpen={openNote} onFollowLink={followLink} onShowGraph={() => void showGraph('local')} />}
+      {palette && <Palette mode={palette} commands={commands} onClose={() => setPalette(null)} onOpen={(id) => void openNote(id)} onCreate={(t) => void createNote(t)} />}
       {error && (
         <div className="app__error" role="alert" onClick={() => setError(null)}>
           {error}

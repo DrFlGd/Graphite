@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { CalendarDays, FilePlus2, FolderOpen, Inbox, Search } from 'lucide-react'
+import { CalendarDays, FilePlus2, FolderOpen, Inbox, Search, Waypoints } from 'lucide-react'
 import type { NoteSummary, VaultInfo } from '../api'
 
 interface Props {
@@ -12,11 +12,13 @@ interface Props {
   onSearch: () => void
   inboxCount: number
   inboxOpen: boolean
+  graphOpen: boolean
   onInbox: () => void
   onToday: () => void
+  onGraph: () => void
 }
 
-export function Sidebar({ vault, notes, currentId, onOpen, onCreate, onPickVault, onSearch, inboxCount, inboxOpen, onInbox, onToday }: Props) {
+export function Sidebar({ vault, notes, currentId, onOpen, onCreate, onPickVault, onSearch, inboxCount, inboxOpen, graphOpen, onInbox, onToday, onGraph }: Props) {
   const [filter, setFilter] = useState('')
   const [newTitle, setNewTitle] = useState('')
 
@@ -55,6 +57,9 @@ export function Sidebar({ vault, notes, currentId, onOpen, onCreate, onPickVault
         </button>
         <button type="button" className="sidebar__nav-btn" onClick={onToday} title="Today's daily note (Ctrl+D)">
           <CalendarDays size={14} /> Today
+        </button>
+        <button type="button" className={`sidebar__nav-btn ${graphOpen ? 'is-current' : ''}`} onClick={onGraph} title="Link graph (Ctrl+Shift+G)">
+          <Waypoints size={14} /> Graph
         </button>
       </div>
       <form

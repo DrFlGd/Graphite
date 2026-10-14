@@ -27,7 +27,7 @@ pub struct VaultInfo {
 
 pub struct Vault {
     root: PathBuf,
-    index: Index,
+    pub(crate) index: Index,
 }
 
 impl Vault {

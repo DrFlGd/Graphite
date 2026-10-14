@@ -60,6 +60,14 @@ enum Cmd {
     Show { target: String },
     /// Notes linking to a note
     Backlinks { target: String },
+    /// The link graph (all notes, or the neighbourhood of one)
+    Graph {
+        /// Only notes within --hops of this note (id, title, alias or path)
+        #[arg(long)]
+        around: Option<String>,
+        #[arg(long, default_value_t = 1)]
+        hops: usize,
+    },
 }
 
 fn main() {
@@ -148,6 +156,34 @@ fn run() -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&note)?);
             } else {
                 print!("{}", note.to_text());
+            }
+        }
+        Cmd::Graph { around, hops } => {
+            let graph = match around {
+                Some(t) => {
+                    let id = resolve(&vault, &t)?;
+                    vault.local_graph(&id, hops)?
+                }
+                None => vault.graph()?,
+            };
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&graph)?);
+            } else {
+                let title = |id: &str| {
+                    graph
+                        .nodes
+                        .iter()
+                        .find(|n| n.id == id)
+                        .map(|n| n.title.clone())
+                        .unwrap_or_default()
+                };
+                println!("{} notes, {} links", graph.nodes.len(), graph.edges.len());
+                for e in &graph.edges {
+                    match &e.relation {
+                        Some(r) => println!("{} -> {} ({r})", title(&e.from), title(&e.to)),
+                        None => println!("{} -> {}", title(&e.from), title(&e.to)),
+                    }
+                }
             }
         }
         Cmd::Backlinks { target } => {
