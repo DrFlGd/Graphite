@@ -1,0 +1,31 @@
+[workspace]
+resolver = "2"
+members = ["core", "apps/cli", "apps/desktop/src-tauri"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/DrFlGd/Graphite"
+
+[workspace.dependencies]
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+rusqlite = { version = "0.40", features = ["bundled"] }
+ulid = "3"
+walkdir = "2"
+ignore = "0.4"
+regex = "1"
+chrono = { version = "0.4", features = ["serde"] }
+notify = "8"
+notify-debouncer-mini = "0.7"
+tracing = "0.1"
+tempfile = "3"
+
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 1

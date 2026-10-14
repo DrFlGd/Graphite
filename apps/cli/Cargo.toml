@@ -1,0 +1,17 @@
+[package]
+name = "graphite-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Graphite command-line tool"
+
+[[bin]]
+name = "graphite"
+path = "src/main.rs"
+
+[dependencies]
+graphite-core = { path = "../../core" }
+anyhow.workspace = true
+clap = { version = "4", features = ["derive", "env"] }
+serde_json.workspace = true

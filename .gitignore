@@ -1,0 +1,22 @@
+# Rust
+/target
+**/target
+
+# Node
+node_modules
+dist
+*.tsbuildinfo
+.vite
+
+# Tauri
+apps/desktop/src-tauri/gen
+
+# Vault runtime state (never commit an index)
+.graphite/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea
+.vscode/*
+!.vscode/extensions.json
