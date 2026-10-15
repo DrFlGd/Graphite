@@ -283,6 +283,19 @@ fn sha256_str(s: &str) -> String {
     format!("{:x}", Sha256::digest(s.as_bytes()))
 }
 
+/// A path as an external program wants it: on Windows, canonical paths carry a
+/// `\\?\` prefix that git refuses as a work tree.
+fn plain_path(p: &Path) -> String {
+    let s = p.to_string_lossy().into_owned();
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}")
+    } else if let Some(rest) = s.strip_prefix(r"\\?\") {
+        rest.to_string()
+    } else {
+        s
+    }
+}
+
 fn run(cmd: &str, args: &[&str], cwd: Option<&Path>) -> std::result::Result<String, String> {
     let mut c = Command::new(cmd);
     c.args(args).stdin(Stdio::null());
@@ -568,11 +581,10 @@ fn word_count(s: &str) -> usize {
 /// A Chromium-based browser for screenshots: `GRAPHITE_BROWSER`, then the PATH,
 /// then the usual install locations.
 pub(crate) fn browser_binary() -> Option<PathBuf> {
-    if let Some(p) = std::env::var_os("GRAPHITE_BROWSER")
-        .map(PathBuf::from)
-        .filter(|p| p.is_file())
-    {
-        return Some(p);
+    if let Some(v) = std::env::var_os("GRAPHITE_BROWSER") {
+        // A path to use, or "none" (or empty) to never take screenshots.
+        let p = PathBuf::from(&v);
+        return if p.is_file() { Some(p) } else { None };
     }
     [
         "chromium",
@@ -602,7 +614,7 @@ pub(crate) fn browser_binary() -> Option<PathBuf> {
 
 fn screenshot(url: &str, dest: &Path) -> bool {
     let Some(bin) = browser_binary() else { return false };
-    let shot = format!("--screenshot={}", dest.display());
+    let shot = format!("--screenshot={}", plain_path(dest));
     let status = Command::new(bin)
         .args([
             "--headless=new",
@@ -1006,7 +1018,7 @@ impl Vault {
                     let _ = fs::remove_dir_all(&repo);
                     run(
                         "git",
-                        &["clone", "--depth", "1", "--quiet", &clone, &repo.to_string_lossy()],
+                        &["clone", "--depth", "1", "--quiet", &clone, &plain_path(&repo)],
                         None,
                     )
                     .map_err(other)?;
@@ -1449,6 +1461,8 @@ mod tests {
 
     #[test]
     fn imports_a_web_page_and_checks_for_updates() {
+        // No screenshots in tests: a headless browser is slow and not what is under test.
+        std::env::set_var("GRAPHITE_BROWSER", "none");
         let dir = tempfile::tempdir().unwrap();
         let mut v = Vault::open(dir.path()).unwrap();
         let content = Arc::new(Mutex::new((
