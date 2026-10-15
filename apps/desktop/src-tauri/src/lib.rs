@@ -1,12 +1,14 @@
 //! Tauri shell: holds the open vault and exposes core operations as
 //! commands. The UI never touches the file system directly.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use graphite_core::{
-    Backlink, Graph, Item, ItemFilter, ItemKind, ItemRow, ItemStatus, Note, NoteSummary, Progress, ProjectHub,
-    QueryResult, SearchHit, Template, Vault, VaultInfo, Watcher,
+    Asset, AssetHit, AssetKind, Backlink, Graph, Item, ItemFilter, ItemKind, ItemRow, ItemStatus, Note, NoteSummary,
+    Progress, ProjectHub, QueryResult, SearchHit, Template, Tools, Vault, VaultInfo, Watcher,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -15,6 +17,8 @@ use tauri::{AppHandle, Emitter, Manager, State};
 struct AppState {
     vault: Mutex<Option<Vault>>,
     watcher: Mutex<Option<Watcher>>,
+    /// Whether the background thread deriving asset previews is running.
+    deriving: AtomicBool,
 }
 
 type CmdResult<T> = Result<T, String>;
@@ -33,6 +37,58 @@ fn with_vault<T>(state: &State<AppState>, f: impl FnOnce(&mut Vault) -> graphite
 #[derive(Serialize, Clone)]
 struct ChangedPayload {
     ids: Vec<String>,
+    #[serde(default)]
+    assets: Vec<String>,
+}
+
+/// Payload of the `assets://derived` event.
+#[derive(Serialize, Clone)]
+struct DerivedPayload {
+    paths: Vec<String>,
+    /// Whether more assets are still waiting.
+    pending: bool,
+}
+
+/// Derive previews, hashes and text for pending assets on a background
+/// thread, one small batch per lock so the UI stays responsive. Idempotent:
+/// a second call while running does nothing.
+fn start_deriver(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    if state.deriving.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        let state = handle.state::<AppState>();
+        loop {
+            let result = match state.vault.lock() {
+                Ok(mut guard) => match guard.as_mut() {
+                    Some(vault) => vault.derive_assets(4),
+                    None => Ok(Vec::new()),
+                },
+                Err(_) => Ok(Vec::new()),
+            };
+            match result {
+                Ok(done) if !done.is_empty() => {
+                    let paths = done.into_iter().map(|a| a.path).collect();
+                    let _ = handle.emit("assets://derived", DerivedPayload { paths, pending: true });
+                }
+                Ok(_) => break,
+                Err(e) => {
+                    tracing::warn!("derive assets: {e}");
+                    break;
+                }
+            }
+        }
+        state.deriving.store(false, Ordering::SeqCst);
+        let _ = handle.emit(
+            "assets://derived",
+            DerivedPayload {
+                paths: Vec::new(),
+                pending: false,
+            },
+        );
+    });
 }
 
 #[tauri::command]
@@ -50,6 +106,7 @@ fn open_vault(app: AppHandle, state: State<AppState>, path: String) -> CmdResult
     let watcher = Watcher::new(&root, move |ev| {
         let state = handle.state::<AppState>();
         let mut ids = Vec::new();
+        let mut assets = Vec::new();
         if let Ok(mut guard) = state.vault.lock() {
             if let Some(vault) = guard.as_mut() {
                 for p in &ev.paths {
@@ -57,18 +114,29 @@ fn open_vault(app: AppHandle, state: State<AppState>, path: String) -> CmdResult
                         let _ = vault.sync();
                         continue;
                     }
+                    let is_note = p.extension().and_then(|e| e.to_str()) == Some("md");
                     match vault.reindex_path(p) {
                         Ok(Some(id)) => ids.push(id),
+                        Ok(None) if !is_note => {
+                            if let Ok(rel) = vault.rel(p) {
+                                assets.push(rel);
+                            }
+                        }
                         Ok(None) => {}
                         Err(e) => tracing::warn!("reindex {}: {e}", p.display()),
                     }
                 }
             }
         }
-        let _ = handle.emit("vault://changed", ChangedPayload { ids });
+        let changed_assets = !assets.is_empty();
+        let _ = handle.emit("vault://changed", ChangedPayload { ids, assets });
+        if changed_assets {
+            start_deriver(&handle);
+        }
     })
     .map_err(err)?;
     *state.watcher.lock().map_err(err)? = Some(watcher);
+    start_deriver(&app);
     Ok(info)
 }
 
@@ -226,8 +294,71 @@ fn project_hub(state: State<AppState>, id: String) -> CmdResult<ProjectHub> {
 }
 
 #[tauri::command]
-fn rebuild_index(state: State<AppState>) -> CmdResult<usize> {
-    with_vault(&state, |v| v.rebuild())
+fn rebuild_index(app: AppHandle, state: State<AppState>) -> CmdResult<usize> {
+    let n = with_vault(&state, |v| v.rebuild())?;
+    start_deriver(&app);
+    Ok(n)
+}
+
+#[tauri::command]
+fn assets(state: State<AppState>, kind: Option<String>, filter: Option<String>) -> CmdResult<Vec<Asset>> {
+    with_vault(&state, |v| {
+        v.assets(kind.as_deref().map(AssetKind::parse), filter.as_deref())
+    })
+}
+
+#[tauri::command]
+fn asset(state: State<AppState>, path: String) -> CmdResult<Asset> {
+    with_vault(&state, |v| v.asset(&path))
+}
+
+#[tauri::command]
+fn asset_references(state: State<AppState>, path: String) -> CmdResult<Vec<Backlink>> {
+    with_vault(&state, |v| v.asset_references(&path))
+}
+
+#[tauri::command]
+fn asset_text(state: State<AppState>, path: String) -> CmdResult<Option<String>> {
+    with_vault(&state, |v| v.asset_text(&path))
+}
+
+#[tauri::command]
+fn asset_counts(state: State<AppState>) -> CmdResult<HashMap<String, usize>> {
+    with_vault(&state, |v| {
+        Ok(v.asset_counts()?
+            .into_iter()
+            .map(|(k, n)| (k.as_str().to_string(), n))
+            .collect())
+    })
+}
+
+#[tauri::command]
+fn search_assets(state: State<AppState>, query: String, limit: Option<usize>) -> CmdResult<Vec<AssetHit>> {
+    with_vault(&state, |v| v.search_assets(&query, limit.unwrap_or(20)))
+}
+
+/// Absolute path of a file in the vault, for opening it in another app or
+/// revealing it in the file manager.
+#[tauri::command]
+fn asset_path(state: State<AppState>, path: String) -> CmdResult<String> {
+    with_vault(&state, |v| Ok(v.asset_abs_path(&path)?.to_string_lossy().into_owned()))
+}
+
+/// Re-derive one asset now (after "regenerate preview").
+#[tauri::command]
+fn derive_asset(state: State<AppState>, path: String) -> CmdResult<Asset> {
+    with_vault(&state, |v| v.derive_asset(&path))
+}
+
+/// Kick the background deriver (e.g. after attaching files).
+#[tauri::command]
+fn derive_assets(app: AppHandle) {
+    start_deriver(&app);
+}
+
+#[tauri::command]
+fn tools() -> Tools {
+    graphite_core::tools().clone()
 }
 
 /// Copy a file from anywhere on disk into the vault's attachments folder and
@@ -254,6 +385,7 @@ fn capture(app: AppHandle, state: State<AppState>, text: String, attachments: Ve
         "vault://changed",
         ChangedPayload {
             ids: vec![note.id.clone()],
+            assets: Vec::new(),
         },
     );
     Ok(note)
@@ -385,6 +517,16 @@ pub fn run() {
             follow_link,
             complete_title,
             rebuild_index,
+            assets,
+            asset,
+            asset_references,
+            asset_text,
+            asset_counts,
+            search_assets,
+            asset_path,
+            derive_asset,
+            derive_assets,
+            tools,
             attach_file,
             attach_data,
             capture,

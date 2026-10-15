@@ -4,6 +4,7 @@
 //! and ADR-002). Everything in here is either a reader/writer of those files
 //! or a rebuildable index over them.
 
+pub mod assets;
 pub mod attachments;
 pub mod capture;
 pub mod error;
@@ -18,6 +19,7 @@ pub mod templates;
 pub mod vault;
 pub mod watcher;
 
+pub use assets::{tools, Asset, AssetHit, AssetKind, DerivedState, Tools};
 pub use capture::{capture_title, is_url, DAILY_DIR, INBOX_DIR};
 pub use error::{Error, Result};
 pub use graph::{Graph, GraphEdge, GraphNode};

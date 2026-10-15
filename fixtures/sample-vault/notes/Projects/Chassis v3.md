@@ -12,3 +12,9 @@ TRACK_WIDTH_MM = 180
 ```
 
 > Print at 0.2 mm layers; the motor mounts need supports.
+
+## Files
+
+![wiring](attachments/Garden Robot/wiring.svg)
+
+Motor bench results: [motor-tests.csv](attachments/Garden Robot/motor-tests.csv). Printable bracket: ![[mount.stl]]

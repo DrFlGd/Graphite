@@ -13,7 +13,7 @@ use crate::vault::STATE_DIR;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VaultEvent {
-    /// Absolute paths of `.md` files (or directories) that changed.
+    /// Absolute paths of files (notes or assets) or directories that changed.
     pub paths: Vec<PathBuf>,
 }
 
@@ -26,7 +26,7 @@ impl Watcher {
     /// Paths are reported under `root` as given (the OS may resolve symlinks,
     /// e.g. `/var` -> `/private/var` on macOS), so callers can strip the
     /// root they opened the vault with. The root itself, anything under
-    /// `.graphite/` and non-Markdown files are filtered out.
+    /// `.graphite/` and hidden files are filtered out.
     pub fn new<F>(root: &Path, mut on_change: F) -> Result<Watcher>
     where
         F: FnMut(VaultEvent) + Send + 'static,
@@ -68,16 +68,15 @@ fn rebase(root: &Path, canon: &Path, path: PathBuf) -> PathBuf {
     }
 }
 
-/// Keep Markdown files and directories inside the vault, but never the root
-/// itself or anything under `.graphite/`.
+/// Keep files and directories inside the vault, but never the root itself,
+/// hidden entries or anything under `.graphite/`.
 fn relevant(root: &Path, state_dir: &Path, path: &Path) -> bool {
     if path == root || path.starts_with(state_dir) {
         return false;
     }
-    if path.components().any(|c| c.as_os_str() == STATE_DIR) {
-        return false;
-    }
-    path.extension().and_then(|e| e.to_str()) == Some("md") || path.is_dir()
+    let rel = path.strip_prefix(root).unwrap_or(path);
+    !rel.components()
+        .any(|c| c.as_os_str() == STATE_DIR || c.as_os_str().to_string_lossy().starts_with('.'))
 }
 
 #[cfg(test)]
@@ -140,7 +139,7 @@ mod tests {
     }
 
     #[test]
-    fn keeps_notes_and_folders_but_not_root_state_dir_or_other_files() {
+    fn keeps_files_and_folders_but_not_root_state_dir_or_hidden() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         let state = root.join(STATE_DIR);
@@ -149,8 +148,8 @@ mod tests {
         assert!(!relevant(root, &state, root));
         assert!(!relevant(root, &state, &state));
         assert!(!relevant(root, &state, &state.join("index.sqlite")));
-        assert!(!relevant(root, &state, &root.join("image.png")));
-        assert!(!relevant(root, &state, &root.join("missing-dir")));
+        assert!(relevant(root, &state, &root.join("image.png")));
+        assert!(!relevant(root, &state, &root.join(".hidden/x.png")));
         assert!(relevant(root, &state, &root.join("notes")));
         assert!(relevant(root, &state, &root.join("notes/a.md")));
         assert!(relevant(root, &state, &root.join("gone.md")));

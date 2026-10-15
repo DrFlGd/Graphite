@@ -5,10 +5,11 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use ignore::WalkBuilder;
 use serde::{Deserialize, Serialize};
 
+use crate::assets::{self, Asset, DerivedState};
 use crate::error::{Error, Result};
 use crate::index::{Backlink, Index, ItemFilter, ItemRow, SearchHit};
 use crate::note::{new_id, Note, NoteSummary};
@@ -24,6 +25,8 @@ pub struct VaultInfo {
     pub root: String,
     pub name: String,
     pub note_count: usize,
+    #[serde(default)]
+    pub asset_count: usize,
 }
 
 pub struct Vault {
@@ -65,12 +68,14 @@ impl Vault {
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_else(|| "Vault".into()),
             note_count: self.index.count()?,
+            asset_count: self.index.asset_count()?,
         })
     }
 
-    /// Walk the vault and (re)index every note whose mtime/size changed;
-    /// drop index rows for files that disappeared. Notes without an `id`
-    /// get one written into their front-matter.
+    /// Walk the vault and (re)index every note and asset whose mtime/size
+    /// changed; drop index rows for files that disappeared. Notes without an
+    /// `id` get one written into their front-matter. Assets are recorded
+    /// with their cheap metadata and left for `derive_assets` to finish.
     pub fn sync(&mut self) -> Result<usize> {
         self.index.begin_batch()?;
         match self.sync_inner() {
@@ -87,6 +92,7 @@ impl Vault {
 
     fn sync_inner(&mut self) -> Result<usize> {
         let mut seen = std::collections::HashSet::new();
+        let mut seen_assets = std::collections::HashSet::new();
         let mut changed = 0usize;
         for entry in WalkBuilder::new(&self.root)
             .hidden(true)
@@ -96,12 +102,20 @@ impl Vault {
             .flatten()
         {
             let path = entry.path();
-            if !path.is_file() || path.extension().and_then(|e| e.to_str()) != Some("md") {
+            if !path.is_file() {
                 continue;
             }
             let rel = self.rel(path)?;
             let meta = fs::metadata(path)?;
             let (mtime, size) = stat(&meta);
+            if path.extension().and_then(|e| e.to_str()) != Some("md") {
+                if self.index.asset_stat(&rel)? != Some((mtime, size)) {
+                    self.index_asset(&rel, &meta)?;
+                    changed += 1;
+                }
+                seen_assets.insert(rel);
+                continue;
+            }
             if self.index.stat(&rel)? == Some((mtime, size)) {
                 seen.insert(rel);
                 continue;
@@ -119,13 +133,40 @@ impl Vault {
                 changed += 1;
             }
         }
+        for stale in self.index.all_asset_paths()? {
+            if !seen_assets.contains(&stale) {
+                self.index.remove_asset(&stale)?;
+                changed += 1;
+            }
+        }
         Ok(changed)
     }
 
-    /// Full rebuild from disk.
+    /// Full rebuild from disk, dropping derived previews and text too.
     pub fn rebuild(&mut self) -> Result<usize> {
         self.index.clear()?;
+        let derived = self.derived_dir();
+        if derived.is_dir() {
+            let _ = fs::remove_dir_all(&derived);
+        }
         self.sync()
+    }
+
+    /// Record (or refresh) an asset's cheap metadata and mark it pending.
+    fn index_asset(&mut self, rel: &str, meta: &fs::Metadata) -> Result<()> {
+        let (_, size) = stat(meta);
+        let modified: DateTime<Utc> = meta.modified().map(DateTime::from).unwrap_or_else(|_| Utc::now());
+        let abs = self.root.join(rel);
+        let asset = assets::probe(&abs, rel, size, modified);
+        self.index.upsert_asset(&asset, None)
+    }
+
+    pub(crate) fn upsert_asset(&mut self, asset: &Asset) -> Result<()> {
+        let text = match (&asset.derived, &asset.text) {
+            (DerivedState::Done, Some(rel)) => fs::read_to_string(self.safe_join(rel)?).ok(),
+            _ => None,
+        };
+        self.index.upsert_asset(asset, text.as_deref())
     }
 
     /// Re-read one file (after an external change) and update the index.
@@ -136,11 +177,27 @@ impl Vault {
         } else {
             to_rel_string(abs_or_rel)
         };
-        if !self.root.join(&rel).is_file() {
+        let abs = self.root.join(&rel);
+        if !abs.is_file() {
             self.index.remove_by_path(&rel)?;
+            self.index.remove_asset(&rel)?;
+            return Ok(None);
+        }
+        if abs.extension().and_then(|e| e.to_str()) != Some("md") {
+            if is_hidden(&rel) {
+                return Ok(None);
+            }
+            let meta = fs::metadata(&abs)?;
+            self.index_asset(&rel, &meta)?;
             return Ok(None);
         }
         self.index_file(&rel).map(Some)
+    }
+
+    /// Whether a path is an asset the vault would index, i.e. not a note,
+    /// not hidden and not under `.graphite/`.
+    pub fn is_asset_path(rel: &str) -> bool {
+        !rel.to_lowercase().ends_with(".md") && !is_hidden(rel)
     }
 
     pub(crate) fn index_file(&mut self, rel: &str) -> Result<String> {
@@ -388,6 +445,10 @@ impl Vault {
         }
         Ok(self.root.join(p))
     }
+}
+
+fn is_hidden(rel: &str) -> bool {
+    rel.split('/').any(|seg| seg.starts_with('.'))
 }
 
 fn stat(meta: &fs::Metadata) -> (i64, i64) {

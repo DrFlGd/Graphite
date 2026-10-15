@@ -4,6 +4,9 @@
 //! - `[[Target]]`, `[[Target#Heading]]`, `[[Target|Display text]]`
 //! - `![[file.png]]` embeds (an embed is a link with `kind = Embed`)
 //! - `key:: [[Target]]` typed links (inline field on the same line)
+//! - `[text](path/to/file.pdf)` and `![alt](attachments/x.png)` file links:
+//!   a relative path with no scheme is a link to an asset (`kind = File`);
+//!   a relative `.md` path is a link to that note.
 //!
 //! Fenced and inline code are skipped.
 
@@ -16,6 +19,26 @@ use std::sync::OnceLock;
 pub enum LinkKind {
     Wiki,
     Embed,
+    /// `[text](relative/path.ext)` or `![alt](relative/path.ext)` to a file in the vault.
+    File,
+}
+
+impl LinkKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            LinkKind::Wiki => "wiki",
+            LinkKind::Embed => "embed",
+            LinkKind::File => "file",
+        }
+    }
+
+    pub fn parse(s: &str) -> LinkKind {
+        match s {
+            "embed" => LinkKind::Embed,
+            "file" => LinkKind::File,
+            _ => LinkKind::Wiki,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -34,6 +57,61 @@ pub struct Link {
 fn link_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| Regex::new(r"(!?)\[\[([^\[\]\n]+?)\]\]").unwrap())
+}
+
+fn md_link_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    // `[text](target)` / `![alt](target)` with an optional "title"; targets with spaces are allowed
+    // (the editor writes them unescaped) but not nested parentheses.
+    RE.get_or_init(|| Regex::new(r#"(!?)\[([^\[\]\n]*)\]\(([^()\n]+?)(?:\s+"[^"\n]*")?\)"#).unwrap())
+}
+
+/// A Markdown link target that points inside the vault: no scheme, no
+/// anchor-only target, no absolute path.
+fn vault_path_target(raw: &str) -> Option<String> {
+    let t = raw.trim().trim_matches('<').trim_matches('>');
+    if t.is_empty() || t.starts_with('#') || t.starts_with('/') || t.starts_with("//") {
+        return None;
+    }
+    // A scheme (`https:`, `mailto:`, `file:`) or a Windows drive makes it external.
+    if let Some(i) = t.find(':') {
+        let head = &t[..i];
+        if !head.is_empty()
+            && head
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '.' || c == '-')
+        {
+            return None;
+        }
+    }
+    let t = t.split('#').next().unwrap_or(t);
+    let decoded = percent_decode(t);
+    let decoded = decoded.trim_start_matches("./").to_string();
+    if decoded.is_empty() || decoded.split('/').any(|seg| seg == "..") {
+        return None;
+    }
+    Some(decoded)
+}
+
+fn percent_decode(s: &str) -> String {
+    if !s.contains('%') {
+        return s.to_string();
+    }
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                out.push(v);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 fn field_re() -> &'static Regex {
@@ -90,10 +168,40 @@ pub fn extract_links(body: &str) -> Vec<Link> {
                         position: offset + start + m.start(),
                     });
                 }
+                for cap in md_link_re().captures_iter(text) {
+                    let m = cap.get(0).unwrap();
+                    let Some(path) = vault_path_target(cap.get(3).unwrap().as_str()) else {
+                        continue;
+                    };
+                    let display = cap
+                        .get(2)
+                        .map(|d| d.as_str().trim().to_string())
+                        .filter(|d| !d.is_empty());
+                    if path.to_lowercase().ends_with(".md") {
+                        out.push(Link {
+                            target: path.trim_end_matches(".md").trim_end_matches(".MD").to_string(),
+                            heading: None,
+                            display,
+                            relation: relation.clone(),
+                            kind: LinkKind::Wiki,
+                            position: offset + start + m.start(),
+                        });
+                    } else {
+                        out.push(Link {
+                            target: path,
+                            heading: None,
+                            display,
+                            relation: relation.clone(),
+                            kind: LinkKind::File,
+                            position: offset + start + m.start(),
+                        });
+                    }
+                }
             }
         }
         offset += line.len();
     }
+    out.sort_by_key(|l| l.position);
     out
 }
 
@@ -135,6 +243,27 @@ pub fn normalise_target(target: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn finds_file_links_and_markdown_note_links() {
+        let body = "See ![plan](attachments/Garden/plan.png) and [the spec](docs/spec%20v2.pdf \"title\").\nAlso [web](https://x.y/a.png), [anchor](#top), [note](notes/Other.md) and `[code](a.png)`.\n- source:: [data](attachments/data.csv)";
+        let links = extract_links(body);
+        let files: Vec<(&str, LinkKind, Option<&str>)> = links
+            .iter()
+            .map(|l| (l.target.as_str(), l.kind, l.relation.as_deref()))
+            .collect();
+        assert_eq!(
+            files,
+            vec![
+                ("attachments/Garden/plan.png", LinkKind::File, None),
+                ("docs/spec v2.pdf", LinkKind::File, None),
+                ("notes/Other", LinkKind::Wiki, None),
+                ("attachments/data.csv", LinkKind::File, Some("source")),
+            ]
+        );
+        assert_eq!(links[0].display.as_deref(), Some("plan"));
+        assert!(links.windows(2).all(|w| w[0].position <= w[1].position));
+    }
 
     #[test]
     fn finds_wiki_links_with_heading_display_and_embed() {
