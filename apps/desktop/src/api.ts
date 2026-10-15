@@ -73,6 +73,46 @@ export interface AssetHit {
   snippet: string
 }
 
+export type SourceKind = 'github' | 'git' | 'video' | 'page' | 'pdf' | 'file'
+
+export const SOURCE_KIND_LABEL: Record<SourceKind, string> = {
+  github: 'GitHub repository',
+  git: 'Git repository',
+  video: 'Video',
+  page: 'Web page',
+  pdf: 'PDF',
+  file: 'File',
+}
+
+/** A `type: source` note with its record fields (flattened NoteSummary + record). */
+export interface SourceRow extends NoteSummary {
+  url: string
+  kind: SourceKind
+  fetched: string | null
+  last_checked: string | null
+  update_available: boolean
+  update_summary: string | null
+  folder: string | null
+  project: string | null
+}
+
+export interface ImportReport {
+  note: Note
+  kind: SourceKind
+  folder: string
+  files: string[]
+  summary: string
+}
+
+export interface UpdateCheck {
+  note_id: string
+  title: string
+  kind: SourceKind
+  changed: boolean
+  summary: string
+  checked: string
+}
+
 export interface Tools {
   ffmpeg: boolean
   ffprobe: boolean
@@ -81,6 +121,7 @@ export interface Tools {
   pdftoppm: boolean
   git: boolean
   yt_dlp: boolean
+  browser: boolean
 }
 
 export interface Outgoing {
@@ -250,6 +291,15 @@ export const api = {
   deriveAsset: (path: string) => invoke<Asset>('derive_asset', { path }),
   deriveAssets: () => invoke<void>('derive_assets'),
   tools: () => invoke<Tools>('tools'),
+  /** Import a URL as a source note; `kind` overrides the importer guessed from the URL. */
+  importUrl: (url: string, opts: { kind?: SourceKind; project?: string; title?: string } = {}) =>
+    invoke<ImportReport>('import_url', { url, kind: opts.kind ?? null, project: opts.project ?? null, title: opts.title ?? null }),
+  reimportSource: (id: string) => invoke<ImportReport>('reimport_source', { id }),
+  sources: () => invoke<SourceRow[]>('sources'),
+  checkSource: (id: string) => invoke<UpdateCheck>('check_source', { id }),
+  /** Check sources not checked in the last `maxAgeHours` (all when omitted). */
+  checkAllSources: (maxAgeHours?: number) => invoke<UpdateCheck[]>('check_all_sources', { maxAgeHours: maxAgeHours ?? null }),
+  classifyUrl: (url: string) => invoke<SourceKind>('classify_url', { url }),
   /** Fires as previews and text are derived in the background; `pending` false when the queue is empty. */
   onAssetsDerived: (cb: (paths: string[], pending: boolean) => void): Promise<UnlistenFn> =>
     listen<{ paths: string[]; pending: boolean }>('assets://derived', (e) => cb(e.payload.paths, e.payload.pending)),

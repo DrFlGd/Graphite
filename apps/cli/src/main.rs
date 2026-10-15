@@ -7,7 +7,9 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use graphite_core::{assets::format_size, AssetKind, Domain, ItemFilter, ItemKind, ItemRow, ItemStatus, Vault};
+use graphite_core::{
+    assets::format_size, AssetKind, Domain, ImportOptions, ItemFilter, ItemKind, ItemRow, ItemStatus, SourceKind, Vault,
+};
 
 #[derive(Parser)]
 #[command(name = "graphite", version, about = "Graphite second-brain CLI")]
@@ -70,6 +72,33 @@ enum Cmd {
     },
     /// Which optional tools (ffmpeg, poppler, git, yt-dlp) were found on the PATH
     Tools,
+    /// Import a URL: a GitHub repo, a web page, a YouTube video, a PDF or any file
+    Import {
+        url: String,
+        /// Link the source to this project (title or id)
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+        /// Importer to use instead of guessing from the URL: github, git, video, page, pdf, file
+        #[arg(long, short = 'k')]
+        kind: Option<String>,
+        /// Title for the source note
+        #[arg(long, short = 't')]
+        title: Option<String>,
+    },
+    /// List imported sources and whether updates are available
+    Sources,
+    /// Check one source (or all of them with --all) for changes upstream
+    Check {
+        /// Source note (title or id)
+        source: Option<String>,
+        #[arg(long)]
+        all: bool,
+    },
+    /// Fetch a source again, replacing its files and note body
+    Reimport {
+        /// Source note (title or id)
+        source: String,
+    },
     /// Turn a note (an idea, say) into a project, keeping its text
     Promote {
         target: String,
@@ -282,6 +311,79 @@ fn run() -> Result<()> {
                 println!("Derived {total} files");
             }
         }
+        Cmd::Import {
+            url,
+            project,
+            kind,
+            title,
+        } => {
+            let kind = match kind.as_deref() {
+                Some(k) => Some(SourceKind::parse(k).with_context(|| format!("unknown importer '{k}'"))?),
+                None => None,
+            };
+            let project = match project {
+                Some(p) => Some(vault.summary(&resolve(&vault, &p)?)?.map(|s| s.title).unwrap_or(p)),
+                None => None,
+            };
+            let report = vault.import_url(&url, &ImportOptions { kind, project, title })?;
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!(
+                    "{}\n  {}\n  note {}\n  files in {}/",
+                    report.summary,
+                    report.kind.as_str(),
+                    report.note.path,
+                    report.folder
+                );
+            }
+        }
+        Cmd::Sources => {
+            let rows = vault.sources()?;
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&rows)?);
+            } else {
+                for r in rows {
+                    println!(
+                        "{:<7} {:<8} {}\n        {}",
+                        r.kind.as_str(),
+                        if r.update_available { "changed" } else { "current" },
+                        r.note.title,
+                        r.url
+                    );
+                }
+            }
+        }
+        Cmd::Check { source, all } => {
+            let checks = if all {
+                vault.check_all_sources(None)?
+            } else {
+                let target = source.context("give a source note, or --all")?;
+                let id = resolve(&vault, &target)?;
+                vec![vault.check_source(&id)?]
+            };
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&checks)?);
+            } else {
+                for c in checks {
+                    println!(
+                        "{:<8} {}: {}",
+                        if c.changed { "changed" } else { "current" },
+                        c.title,
+                        c.summary
+                    );
+                }
+            }
+        }
+        Cmd::Reimport { source } => {
+            let id = resolve(&vault, &source)?;
+            let report = vault.reimport_source(&id)?;
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("{}\n  note {}", report.summary, report.note.path);
+            }
+        }
         Cmd::Tools => {
             let t = graphite_core::tools();
             if cli.json {
@@ -295,6 +397,7 @@ fn run() -> Result<()> {
                     ("pdftoppm", t.pdftoppm, "PDF thumbnails"),
                     ("git", t.git, "GitHub importer"),
                     ("yt-dlp", t.yt_dlp, "video importer"),
+                    ("browser", t.browser, "web page screenshots (Chromium, Chrome or Edge)"),
                 ] {
                     println!("{:<10} {}  {}", name, if ok { "found  " } else { "missing" }, what);
                 }

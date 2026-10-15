@@ -7,8 +7,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use graphite_core::{
-    Asset, AssetHit, AssetKind, Backlink, Graph, Item, ItemFilter, ItemKind, ItemRow, ItemStatus, Note, NoteSummary,
-    Progress, ProjectHub, QueryResult, SearchHit, Template, Tools, Vault, VaultInfo, Watcher,
+    Asset, AssetHit, AssetKind, Backlink, Graph, ImportOptions, ImportReport, Item, ItemFilter, ItemKind, ItemRow,
+    ItemStatus, Note, NoteSummary, Progress, ProjectHub, QueryResult, SearchHit, SourceKind, SourceRow, Template,
+    Tools, UpdateCheck, Vault, VaultInfo, Watcher,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -383,6 +384,67 @@ fn tools() -> Tools {
     graphite_core::tools().clone()
 }
 
+// ----- sources (importers) -----
+// These hit the network, so they are async: Tauri runs them off the main
+// thread and the window stays responsive while a clone or download runs.
+
+/// Import a URL (GitHub repo, web page, video, PDF or file) as a source note.
+#[tauri::command]
+async fn import_url(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    url: String,
+    kind: Option<String>,
+    project: Option<String>,
+    title: Option<String>,
+) -> CmdResult<ImportReport> {
+    let kind = match kind.as_deref() {
+        Some(k) => Some(SourceKind::parse(k).ok_or_else(|| format!("unknown importer: {k}"))?),
+        None => None,
+    };
+    let opts = ImportOptions {
+        kind,
+        project: project.filter(|p| !p.trim().is_empty()),
+        title: title.filter(|t| !t.trim().is_empty()),
+    };
+    let report = with_vault(&state, |v| v.import_url(&url, &opts))?;
+    start_deriver(&app);
+    Ok(report)
+}
+
+/// Fetch a source again, replacing its files and note body.
+#[tauri::command]
+async fn reimport_source(app: AppHandle, state: State<'_, AppState>, id: String) -> CmdResult<ImportReport> {
+    let report = with_vault(&state, |v| v.reimport_source(&id))?;
+    start_deriver(&app);
+    Ok(report)
+}
+
+/// Every source note with its record (url, kind, last check, update flag).
+#[tauri::command]
+fn sources(state: State<AppState>) -> CmdResult<Vec<SourceRow>> {
+    with_vault(&state, |v| v.sources())
+}
+
+/// Compare one source with upstream and record the outcome on its note.
+#[tauri::command]
+async fn check_source(state: State<'_, AppState>, id: String) -> CmdResult<UpdateCheck> {
+    with_vault(&state, |v| v.check_source(&id))
+}
+
+/// Check every source not checked within `max_age_hours` (all of them when omitted).
+#[tauri::command]
+async fn check_all_sources(state: State<'_, AppState>, max_age_hours: Option<u64>) -> CmdResult<Vec<UpdateCheck>> {
+    let max_age = max_age_hours.map(|h| std::time::Duration::from_secs(h * 3600));
+    with_vault(&state, |v| v.check_all_sources(max_age))
+}
+
+/// Which importer a URL would get.
+#[tauri::command]
+fn classify_url(url: String) -> String {
+    graphite_core::classify_url(&url).as_str().to_string()
+}
+
 /// Copy a file from anywhere on disk into the vault's attachments folder and
 /// return its vault-relative path (what goes into the Markdown).
 #[tauri::command]
@@ -552,6 +614,12 @@ pub fn run() {
             derive_asset,
             derive_assets,
             tools,
+            import_url,
+            reimport_source,
+            sources,
+            check_source,
+            check_all_sources,
+            classify_url,
             attach_file,
             attach_data,
             capture,
