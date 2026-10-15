@@ -24,6 +24,8 @@ const CASES: Record<string, string> = {
   encodedPath: '![plan](attachments/Garden%20Robot/plan.png)\n\n![clip](attachments/Garden%20Robot/clip%20one.mp4)',
   divider: 'above\n\n---\n\nbelow',
   wikiLink: 'See [[Garden Robot]] and [[Garden Robot#Power|the power bit]].',
+  wikiEmbed: 'Printable bracket: ![[mount.stl]] and ![[Garden Robot#Parts]]',
+  wikiEmbedAlone: '![[wiring.svg]]',
   typedLink: 'depends-on:: [[Battery]]',
   inlineMarks: 'some **bold**, *italic*, `code` and ~~gone~~ text',
   webLink: 'a [site](https://example.com) here',
@@ -47,7 +49,15 @@ describe('markdown round-trip', () => {
     const doc = markdownToDoc('x [[A|b]] y')
     const para = doc.content?.[0]
     const link = para?.content?.find((n) => n.type === 'wikiLink')
-    expect(link?.attrs).toEqual({ target: 'A', heading: null, display: 'b' })
+    expect(link?.attrs).toEqual({ target: 'A', heading: null, display: 'b', embed: false })
+  })
+
+  it('keeps the ! of a wiki embed on the node, not as escaped text', () => {
+    const doc = markdownToDoc('Bracket: ![[mount.stl]]')
+    const para = doc.content?.[0]
+    expect(para?.content?.map((n) => n.type)).toEqual(['text', 'wikiLink'])
+    expect(para?.content?.[0].text).toBe('Bracket: ')
+    expect(para?.content?.[1].attrs).toEqual({ target: 'mount.stl', heading: null, display: null, embed: true })
   })
 
   it('gives task items their state', () => {

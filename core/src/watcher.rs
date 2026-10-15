@@ -2,14 +2,21 @@
 //! show up in Graphite. The watcher only reports; the caller decides what
 //! to reindex (usually `Vault::reindex_path`).
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::sync::mpsc::{self, RecvTimeoutError};
+use std::time::{Duration, Instant};
 
-use notify::RecursiveMode;
-use notify_debouncer_mini::{new_debouncer, DebounceEventResult, Debouncer};
+use notify::event::{AccessKind, AccessMode};
+use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher as _};
 
 use crate::error::Result;
 use crate::vault::STATE_DIR;
+
+/// Quiet time before a batch of changes is reported.
+const DEBOUNCE: Duration = Duration::from_millis(300);
+/// A batch is reported after this long even while changes keep coming.
+const MAX_BATCH: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VaultEvent {
@@ -18,7 +25,7 @@ pub struct VaultEvent {
 }
 
 pub struct Watcher {
-    _debouncer: Debouncer<notify::RecommendedWatcher>,
+    _watcher: RecommendedWatcher,
 }
 
 impl Watcher {
@@ -26,7 +33,9 @@ impl Watcher {
     /// Paths are reported under `root` as given (the OS may resolve symlinks,
     /// e.g. `/var` -> `/private/var` on macOS), so callers can strip the
     /// root they opened the vault with. The root itself, anything under
-    /// `.graphite/` and hidden files are filtered out.
+    /// `.graphite/` and hidden files are filtered out, and so is a file
+    /// merely being opened or read: on Linux those are reported too, and
+    /// reacting to them (by reading the file again) would never settle.
     pub fn new<F>(root: &Path, mut on_change: F) -> Result<Watcher>
     where
         F: FnMut(VaultEvent) + Send + 'static,
@@ -34,25 +43,64 @@ impl Watcher {
         let root = root.to_path_buf();
         let canon = std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone());
         let state_dir = root.join(STATE_DIR);
-        let mut debouncer = new_debouncer(Duration::from_millis(300), {
-            let root = root.clone();
-            move |res: DebounceEventResult| {
-                if let Ok(events) = res {
-                    let mut paths: Vec<PathBuf> = events
-                        .into_iter()
-                        .map(|e| rebase(&root, &canon, e.path))
-                        .filter(|p| relevant(&root, &state_dir, p))
-                        .collect();
-                    paths.sort();
-                    paths.dedup();
-                    if !paths.is_empty() {
-                        on_change(VaultEvent { paths });
-                    }
+        let (tx, rx) = mpsc::channel::<Event>();
+        let mut watcher = notify::recommended_watcher(move |res: notify::Result<Event>| {
+            if let Ok(event) = res {
+                if changes_content(&event.kind) {
+                    let _ = tx.send(event);
                 }
             }
         })?;
-        debouncer.watcher().watch(&root, RecursiveMode::Recursive)?;
-        Ok(Watcher { _debouncer: debouncer })
+        watcher.watch(&root, RecursiveMode::Recursive)?;
+        // The loop ends when the watcher (and with it the sender) is dropped.
+        std::thread::spawn({
+            let root = root.clone();
+            move || {
+                let mut pending = BTreeSet::new();
+                let mut first: Option<Instant> = None;
+                loop {
+                    let wait = match first {
+                        Some(t) => DEBOUNCE.min(MAX_BATCH.saturating_sub(t.elapsed())),
+                        None => Duration::from_secs(3600),
+                    };
+                    match rx.recv_timeout(wait) {
+                        Ok(event) => {
+                            first.get_or_insert_with(Instant::now);
+                            pending.extend(
+                                event
+                                    .paths
+                                    .into_iter()
+                                    .map(|p| rebase(&root, &canon, p))
+                                    .filter(|p| relevant(&root, &state_dir, p)),
+                            );
+                            if first.is_some_and(|t| t.elapsed() < MAX_BATCH) {
+                                continue;
+                            }
+                        }
+                        Err(RecvTimeoutError::Timeout) if first.is_none() => continue,
+                        Err(RecvTimeoutError::Timeout) => {}
+                        Err(RecvTimeoutError::Disconnected) => break,
+                    }
+                    first = None;
+                    if !pending.is_empty() {
+                        on_change(VaultEvent {
+                            paths: std::mem::take(&mut pending).into_iter().collect(),
+                        });
+                    }
+                }
+            }
+        });
+        Ok(Watcher { _watcher: watcher })
+    }
+}
+
+/// Whether an event can mean a file's content, name or presence changed.
+/// Opening, reading and closing a file without writing it cannot.
+fn changes_content(kind: &EventKind) -> bool {
+    match kind {
+        EventKind::Access(AccessKind::Close(AccessMode::Write)) => true,
+        EventKind::Access(_) => false,
+        _ => true,
     }
 }
 
@@ -124,6 +172,34 @@ mod tests {
             );
             seen_note = ev.paths.iter().any(|p| p.ends_with("note.md"));
         }
+    }
+
+    #[test]
+    fn reading_a_file_is_not_a_change() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("note.md"), "hello").unwrap();
+        let (tx, rx) = mpsc::channel();
+        let _w = Watcher::new(dir.path(), move |ev| {
+            let _ = tx.send(ev);
+        })
+        .unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        for _ in 0..3 {
+            std::fs::read_to_string(dir.path().join("note.md")).unwrap();
+        }
+        match rx.recv_timeout(Duration::from_millis(1500)) {
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            other => panic!("reading reported a change: {other:?}"),
+        }
+        assert!(!changes_content(&EventKind::Access(AccessKind::Open(
+            notify::event::AccessMode::Any
+        ))));
+        assert!(!changes_content(&EventKind::Access(AccessKind::Close(
+            AccessMode::Read
+        ))));
+        assert!(changes_content(&EventKind::Access(AccessKind::Close(
+            AccessMode::Write
+        ))));
     }
 
     #[test]
