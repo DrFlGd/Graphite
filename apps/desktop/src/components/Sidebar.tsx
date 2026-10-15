@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { CalendarDays, FilePlus2, FolderOpen, Inbox, LayoutTemplate, ListChecks, Paperclip, Search, Waypoints } from 'lucide-react'
+import { CalendarDays, Download, FilePlus2, FolderOpen, Inbox, LayoutTemplate, ListChecks, Paperclip, Search, Waypoints } from 'lucide-react'
 import type { NoteSummary, VaultInfo } from '../api'
 
 interface Props {
@@ -17,15 +17,19 @@ interface Props {
   graphOpen: boolean
   tasksOpen: boolean
   filesOpen: boolean
+  sourcesOpen: boolean
   openTasks: number
+  /** Sources that changed upstream since they were fetched. */
+  sourceUpdates: number
   onInbox: () => void
   onToday: () => void
   onGraph: () => void
   onTasks: () => void
   onFiles: () => void
+  onSources: () => void
 }
 
-export function Sidebar({ vault, notes, currentId, onOpen, onCreate, onCreateFromTemplate, onPickVault, onSearch, inboxCount, inboxOpen, graphOpen, tasksOpen, filesOpen, openTasks, onInbox, onToday, onGraph, onTasks, onFiles }: Props) {
+export function Sidebar({ vault, notes, currentId, onOpen, onCreate, onCreateFromTemplate, onPickVault, onSearch, inboxCount, inboxOpen, graphOpen, tasksOpen, filesOpen, sourcesOpen, openTasks, sourceUpdates, onInbox, onToday, onGraph, onTasks, onFiles, onSources }: Props) {
   const [filter, setFilter] = useState('')
   const [newTitle, setNewTitle] = useState('')
 
@@ -77,6 +81,10 @@ export function Sidebar({ vault, notes, currentId, onOpen, onCreate, onCreateFro
         <button type="button" className={`sidebar__nav-btn ${filesOpen ? 'is-current' : ''}`} onClick={onFiles} title="Every file in the vault: images, video, PDFs, 3D models (Ctrl+Shift+F)">
           <Paperclip size={14} /> Files
           {vault.asset_count > 0 && <span className="sidebar__count sidebar__count--quiet">{vault.asset_count}</span>}
+        </button>
+        <button type="button" className={`sidebar__nav-btn ${sourcesOpen ? 'is-current' : ''}`} onClick={onSources} title="Imported repos, pages, videos and files, and whether they changed upstream">
+          <Download size={14} /> Sources
+          {sourceUpdates > 0 && <span className="sidebar__count" title={`${sourceUpdates} changed upstream`}>{sourceUpdates}</span>}
         </button>
       </div>
       <form

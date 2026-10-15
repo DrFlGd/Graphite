@@ -176,6 +176,13 @@ export function NoteTab({ noteId, active, changed, saved, patch, onActiveNote, o
         if (active) onEditorReady(ed)
       }}
       onFiles={(files, pos) => void onFiles(files, pos)}
+      onReplace={(n) => {
+        pending.current.note = null
+        setNote(n)
+        setSaveState('saved')
+        onSaved(n)
+      }}
+      onError={onError}
     />
   )
 }

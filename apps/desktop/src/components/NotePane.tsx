@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react'
 import { NoteEditor, ToolButton, type Editor, type NoteCandidate } from '@graphite/ui'
 import { FileCode2, Trash2 } from 'lucide-react'
 import { api, type Note } from '../api'
+import { SourceBar } from './SourceBar'
 
 interface Props {
   note: Note
@@ -16,9 +17,12 @@ interface Props {
   pickFile: () => Promise<{ src: string; name: string } | null>
   onEditorReady?: (editor: Editor) => void
   onFiles?: (files: File[], pos?: number) => void
+  /** Adopt a note rewritten by an import without marking it dirty. */
+  onReplace?: (note: Note) => void
+  onError?: (e: string) => void
 }
 
-export function NotePane({ note, saveState, onChange, onFollowLink, onOpenFile, onOpenUrl, onDelete, resolveSrc, pickImage, pickFile, onEditorReady, onFiles }: Props) {
+export function NotePane({ note, saveState, onChange, onFollowLink, onOpenFile, onOpenUrl, onDelete, resolveSrc, pickImage, pickFile, onEditorReady, onFiles, onReplace, onError }: Props) {
   const [raw, setRaw] = useState(false)
 
   const searchNotes = useCallback(async (q: string): Promise<NoteCandidate[]> => {
@@ -47,6 +51,7 @@ export function NotePane({ note, saveState, onChange, onFollowLink, onOpenFile, 
         </div>
       </header>
       <TagRow tags={note.tags} onChange={(tags) => onChange({ ...note, tags })} />
+      {note.type === 'source' && onReplace && <SourceBar note={note} onReplace={onReplace} onOpenUrl={onOpenUrl} onError={onError ?? (() => {})} />}
       {raw ? (
         <div className="note__raw">
           <div className="gr-toolbar">

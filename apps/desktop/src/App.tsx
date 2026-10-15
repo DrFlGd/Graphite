@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
-import { ArrowUpRight, CalendarDays, Columns2, FilePlus2, FolderOpen, Inbox, LayoutTemplate, ListChecks, Locate, Paperclip, RefreshCw, Search, SquareKanban, Trash2, Waypoints, X, Zap } from 'lucide-react'
+import { ArrowUpRight, CalendarDays, Columns2, Download, FilePlus2, FolderOpen, Inbox, LayoutTemplate, ListChecks, Locate, Paperclip, RefreshCw, Search, SquareKanban, Trash2, Waypoints, X, Zap } from 'lucide-react'
 import { insertAttachments, type AttachmentItem, type Editor } from '@graphite/ui'
 import { api, assetUrl, decodePath, INBOX_DIR, type Note, type NoteSummary, type VaultInfo } from './api'
 import { Sidebar } from './components/Sidebar'
@@ -17,6 +17,8 @@ import type { ViewKind } from './components/QueryView'
 import { ContextPanel } from './components/ContextPanel'
 import { AssetView } from './components/AssetView'
 import { FilesView } from './components/FilesView'
+import { SourcesView } from './components/SourcesView'
+import { ImportDialog, type ImportRequest } from './components/ImportDialog'
 import { GraphView, type GraphMode } from './components/GraphView'
 import { Palette, type Command, type PaletteMode } from './components/Palette'
 import { Welcome } from './components/Welcome'
@@ -47,6 +49,10 @@ export function App() {
   /** Query and project notes the user chose to see as text rather than as a view. */
   const [editingNotes, setEditingNotes] = useState<Set<string>>(() => new Set())
   const [picker, setPicker] = useState<{ kind: 'create' } | { kind: 'promote'; noteId: string; title: string } | null>(null)
+  /** The import dialog, when open. */
+  const [importing, setImporting] = useState<ImportRequest | null>(null)
+  /** Sources flagged as changed upstream, for the sidebar badge. */
+  const [sourceUpdates, setSourceUpdates] = useState(0)
   /** Front-matter edits from the context panel, for the note tab to save. */
   const [patch, setPatch] = useState<{ id: string; patch: Partial<Note>; seq: number } | null>(null)
   const activeEditor = useRef<Editor | null>(null)
@@ -130,6 +136,7 @@ export function App() {
 
   const openInbox = useCallback((newTab = false) => setLayout((l) => L.open(l, { kind: 'inbox' }, newTab)), [])
   const openFiles = useCallback((newTab = false) => setLayout((l) => L.open(l, { kind: 'files' }, newTab)), [])
+  const openSources = useCallback((newTab = false) => setLayout((l) => L.open(l, { kind: 'sources' }, newTab)), [])
   /** Show a file's own view; `path` may carry `#page=N` from a PDF link. */
   const openAsset = useCallback((src: string, newTab = false) => {
     const [path, hash] = src.split('#')
@@ -155,6 +162,39 @@ export function App() {
       cancelled = true
     }
   }, [vault, version])
+
+  // How many sources changed upstream, whenever notes change.
+  useEffect(() => {
+    if (!vault) return
+    let cancelled = false
+    void api
+      .sources()
+      .then((rows) => {
+        if (!cancelled) setSourceUpdates(rows.filter((r) => r.update_available).length)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [vault, version])
+
+  // The scheduled update check: once per vault open, sources not checked in the last day.
+  useEffect(() => {
+    if (!vault) return
+    let cancelled = false
+    const t = window.setTimeout(() => {
+      void api
+        .checkAllSources(24)
+        .then((checks) => {
+          if (!cancelled && checks.length > 0) void refreshList()
+        })
+        .catch(() => {})
+    }, 4000)
+    return () => {
+      cancelled = true
+      window.clearTimeout(t)
+    }
+  }, [vault, refreshList])
 
   const showGraph = useCallback((mode: GraphMode, newTab = false) => {
     setGraphMode(mode)
@@ -364,6 +404,7 @@ export function App() {
         else if (key === 'g') act(() => showGraph(lastNote && active.kind !== 'graph' ? 'local' : 'global'))
         else if (key === 't') act(() => openTasksView())
         else if (key === 'f') act(() => openFiles())
+        else if (key === 'i') act(() => setImporting({}))
         else if (key === 'n') act(() => setPicker({ kind: 'create' }))
         else if (key === 'tab') act(() => setLayout((l) => L.cycleTab(l, -1)))
         return
@@ -392,6 +433,8 @@ export function App() {
       { id: 'inbox', label: 'Show inbox', icon: <Inbox size={16} />, keywords: 'triage captures', run: () => openInbox() },
       { id: 'tasks', label: 'Show tasks', shortcut: 'Ctrl+Shift+T', icon: <ListChecks size={16} />, keywords: 'todo tracker gaps questions board', run: () => openTasksView() },
       { id: 'files', label: 'Show files', shortcut: 'Ctrl+Shift+F', icon: <Paperclip size={16} />, keywords: 'attachments images video pdf models gallery assets', run: () => openFiles() },
+      { id: 'import', label: 'Import from URL…', shortcut: 'Ctrl+Shift+I', icon: <Download size={16} />, keywords: 'github repo clone web page article youtube video pdf source fetch', run: () => setImporting({}) },
+      { id: 'sources', label: 'Show sources', icon: <Download size={16} />, keywords: 'imports repos pages videos updates', run: () => openSources() },
       ...(activeNote ? [{ id: 'attach', label: 'Attach a file to this note…', icon: <Paperclip size={16} />, keywords: 'upload insert embed', run: () => void pickFile().then((f) => f && activeEditor.current && insertAttachments(activeEditor.current, [f])) }] : []),
       { id: 'query', label: 'New saved query', icon: <SquareKanban size={16} />, keywords: 'view list table board filter', run: () => void saveQuery('type:task status:open sort:due', 'list') },
       { id: 'graph', label: 'Show graph of the whole vault', shortcut: 'Ctrl+Shift+G', icon: <Waypoints size={16} />, keywords: 'links network', run: () => showGraph('global') },
@@ -404,7 +447,7 @@ export function App() {
       { id: 'vault', label: 'Open another vault folder', icon: <FolderOpen size={16} />, keywords: 'switch', run: () => void pickVault() },
       { id: 'reindex', label: 'Rebuild the search index', icon: <RefreshCw size={16} />, keywords: 'reindex repair', run: () => void api.rebuildIndex().then(refreshList).catch((e) => setError(String(e))) },
     ],
-    [createNote, openToday, openInbox, openTasksView, openFiles, pickFile, saveQuery, showAsView, showGraph, lastNote, activeNote, deleteNote, pickVault, refreshList],
+    [createNote, openToday, openInbox, openTasksView, openFiles, openSources, pickFile, saveQuery, showAsView, showGraph, lastNote, activeNote, deleteNote, pickVault, refreshList],
   )
 
   if (!vault) return <Welcome onPick={pickVault} error={error} />
@@ -429,6 +472,7 @@ export function App() {
               assetVersion={assetVersion}
               onOpenFile={openAsset}
               onFilesChanged={() => setAssetVersion((v) => v + 1)}
+              onImport={(project) => setImporting({ project })}
               onOpen={openNote}
               onChanged={() => void refreshList()}
               onError={setError}
@@ -467,11 +511,13 @@ export function App() {
         )
       }
       case 'inbox':
-        return <InboxView key={tab.id} notes={notes} onOpen={(id) => openNote(id)} onChanged={() => void refreshList()} onError={setError} />
+        return <InboxView key={tab.id} notes={notes} onOpen={(id) => openNote(id)} onImport={(url, captureId) => setImporting({ url, captureId })} onChanged={() => void refreshList()} onError={setError} />
       case 'tasks':
         return <TasksView key={tab.id} notes={notes} version={version} onOpen={openNote} onChanged={() => void refreshList()} onError={setError} onSaveQuery={(q, v) => void saveQuery(q, v)} />
       case 'files':
         return <FilesView key={tab.id} vaultRoot={vault.root} version={assetVersion} onOpen={openAsset} onChanged={() => setAssetVersion((v) => v + 1)} onError={setError} />
+      case 'sources':
+        return <SourcesView key={tab.id} version={version} onOpen={openNote} onImport={() => setImporting({})} onChanged={() => void refreshList()} onError={setError} />
       case 'asset':
         return <AssetView key={tab.id} path={tab.path} page={tab.page} vaultRoot={vault.root} version={assetVersion} onOpenNote={openNote} onNoteCreated={(id) => void refreshList().then(() => openNote(id))} onError={setError} />
       case 'graph':
@@ -505,12 +551,15 @@ export function App() {
         graphOpen={active.kind === 'graph'}
         tasksOpen={active.kind === 'tasks'}
         filesOpen={active.kind === 'files' || active.kind === 'asset'}
+        sourcesOpen={active.kind === 'sources'}
         openTasks={openTasks}
+        sourceUpdates={sourceUpdates}
         onInbox={() => openInbox()}
         onToday={() => void openToday()}
         onGraph={() => showGraph(graphMode)}
         onTasks={() => openTasksView()}
         onFiles={() => openFiles()}
+        onSources={() => openSources()}
       />
       <main className="panes">
         {layout.panes.map((pane, pi) => {
@@ -562,6 +611,20 @@ export function App() {
           onOpen={(id, newTab) => openNote(id, newTab || palette.newTab)}
           onOpenFile={(path, newTab) => openAsset(path, newTab || palette.newTab)}
           onCreate={(t) => void createNote(t)}
+          onImport={(url) => setImporting({ url })}
+        />
+      )}
+      {importing && (
+        <ImportDialog
+          request={importing}
+          notes={notes}
+          onClose={() => setImporting(null)}
+          onError={setError}
+          onDone={(report) => {
+            setImporting(null)
+            setAssetVersion((v) => v + 1)
+            void refreshList().then(() => openNote(report.note.id))
+          }}
         />
       )}
       {error && (

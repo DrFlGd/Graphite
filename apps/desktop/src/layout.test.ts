@@ -75,7 +75,10 @@ describe('layout', () => {
     l = open(l, { kind: 'files' }, true)
     l = open(l, { kind: 'files' }, true)
     expect(l.panes[0].tabs).toHaveLength(3)
-    expect(parseLayout(JSON.parse(JSON.stringify(l)))?.panes[0].tabs).toHaveLength(3)
+    l = open(l, { kind: 'sources' }, true)
+    l = open(l, { kind: 'sources' }, true)
+    expect(l.panes[0].tabs).toHaveLength(4)
+    expect(parseLayout(JSON.parse(JSON.stringify(l)))?.panes[0].tabs).toHaveLength(4)
   })
 
   it('drops tabs of deleted notes and finds where a note is open', () => {
