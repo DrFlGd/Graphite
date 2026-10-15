@@ -136,9 +136,9 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      # The workflow's own ref, not the tag: release notes may be added to the
+      # default branch after the tag was cut.
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ env.TAG }}
       - name: Remove assets that are not installers or CLI archives
         env:
           GH_TOKEN: ${{ github.token }}
