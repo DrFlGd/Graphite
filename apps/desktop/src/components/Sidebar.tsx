@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { CalendarDays, FilePlus2, FolderOpen, Inbox, LayoutTemplate, ListChecks, Search, Waypoints } from 'lucide-react'
+import { CalendarDays, FilePlus2, FolderOpen, Inbox, LayoutTemplate, ListChecks, Paperclip, Search, Waypoints } from 'lucide-react'
 import type { NoteSummary, VaultInfo } from '../api'
 
 interface Props {
@@ -16,14 +16,16 @@ interface Props {
   inboxOpen: boolean
   graphOpen: boolean
   tasksOpen: boolean
+  filesOpen: boolean
   openTasks: number
   onInbox: () => void
   onToday: () => void
   onGraph: () => void
   onTasks: () => void
+  onFiles: () => void
 }
 
-export function Sidebar({ vault, notes, currentId, onOpen, onCreate, onCreateFromTemplate, onPickVault, onSearch, inboxCount, inboxOpen, graphOpen, tasksOpen, openTasks, onInbox, onToday, onGraph, onTasks }: Props) {
+export function Sidebar({ vault, notes, currentId, onOpen, onCreate, onCreateFromTemplate, onPickVault, onSearch, inboxCount, inboxOpen, graphOpen, tasksOpen, filesOpen, openTasks, onInbox, onToday, onGraph, onTasks, onFiles }: Props) {
   const [filter, setFilter] = useState('')
   const [newTitle, setNewTitle] = useState('')
 
@@ -71,6 +73,10 @@ export function Sidebar({ vault, notes, currentId, onOpen, onCreate, onCreateFro
         <button type="button" className={`sidebar__nav-btn ${tasksOpen ? 'is-current' : ''}`} onClick={onTasks} title="Every open task in the vault (Ctrl+Shift+T)">
           <ListChecks size={14} /> Tasks
           {openTasks > 0 && <span className="sidebar__count sidebar__count--quiet">{openTasks}</span>}
+        </button>
+        <button type="button" className={`sidebar__nav-btn ${filesOpen ? 'is-current' : ''}`} onClick={onFiles} title="Every file in the vault: images, video, PDFs, 3D models (Ctrl+Shift+F)">
+          <Paperclip size={14} /> Files
+          {vault.asset_count > 0 && <span className="sidebar__count sidebar__count--quiet">{vault.asset_count}</span>}
         </button>
       </div>
       <form

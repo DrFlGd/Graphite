@@ -104,7 +104,7 @@ Progress for a project is the share of its done tasks over all its tasks except 
 
 ### Images and attachments in Markdown
 
-Standard syntax with a vault-relative path: `![alt](attachments/Garden Robot/chassis.png)`. Paths are relative to the vault root, use `/`, and never start with `/` or contain `..`. A relative path in `[text](path)` or `![alt](path)` with no scheme is a **file link** and is indexed (kind `file`), so an asset knows which notes reference it; `![[chassis.stl]]` embeds the file by name. A relative `.md` path is an ordinary note link.
+Standard syntax with a vault-relative path: `![alt](attachments/Garden Robot/chassis.png)`. Paths are relative to the vault root, use `/`, and never start with `/` or contain `..`. Spaces and parentheses in a path are written percent-encoded (`attachments/Garden%20Robot/x.png`), as CommonMark requires; readers decode them. A relative path in `[text](path)` or `![alt](path)` with no scheme is a **file link** and is indexed (kind `file`), so an asset knows which notes reference it; `![[chassis.stl]]` embeds the file by name. A relative `.md` path is an ordinary note link.
 
 ### Assets (M3)
 

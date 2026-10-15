@@ -8,14 +8,17 @@ interface Props {
   saveState: 'saved' | 'dirty' | 'saving'
   onChange: (note: Note) => void
   onFollowLink: (target: string) => void
+  onOpenFile: (src: string) => void
+  onOpenUrl: (href: string) => void
   onDelete: () => void
   resolveSrc?: (src: string) => string
   pickImage: () => Promise<string | null>
+  pickFile: () => Promise<{ src: string; name: string } | null>
   onEditorReady?: (editor: Editor) => void
   onFiles?: (files: File[], pos?: number) => void
 }
 
-export function NotePane({ note, saveState, onChange, onFollowLink, onDelete, resolveSrc, pickImage, onEditorReady, onFiles }: Props) {
+export function NotePane({ note, saveState, onChange, onFollowLink, onOpenFile, onOpenUrl, onDelete, resolveSrc, pickImage, pickFile, onEditorReady, onFiles }: Props) {
   const [raw, setRaw] = useState(false)
 
   const searchNotes = useCallback(async (q: string): Promise<NoteCandidate[]> => {
@@ -61,9 +64,11 @@ export function NotePane({ note, saveState, onChange, onFollowLink, onDelete, re
           markdown={note.body}
           onChange={(body) => onChange({ ...note, body })}
           onFollowLink={(target) => onFollowLink(target)}
+          onOpenFile={onOpenFile}
+          onOpenUrl={onOpenUrl}
           searchNotes={searchNotes}
           resolveSrc={resolveSrc}
-          blockContext={{ pickImage }}
+          blockContext={{ pickImage, pickFile }}
           onReady={onEditorReady}
           onFiles={onFiles}
           autofocus

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { ChevronRight, FileText, Plus } from 'lucide-react'
-import { api, type SearchHit } from '../api'
+import { api, type AssetHit, type SearchHit } from '../api'
+import { KindIcon } from './FilesView'
 
 export interface Command {
   id: string
@@ -21,18 +22,20 @@ interface Props {
   onClose: () => void
   /** Enter opens in the current tab; Ctrl/Cmd+Enter in a new one. */
   onOpen: (id: string, newTab: boolean) => void
+  onOpenFile: (path: string, newTab: boolean) => void
   onCreate: (title: string) => void
 }
 
-type Row = { kind: 'hit'; h: SearchHit } | { kind: 'new' } | { kind: 'cmd'; c: Command }
+type Row = { kind: 'hit'; h: SearchHit } | { kind: 'file'; a: AssetHit } | { kind: 'new' } | { kind: 'cmd'; c: Command }
 
 /**
  * One box for everything reachable by keyboard: Ctrl+K searches notes (Enter
  * on no match creates one); Ctrl+Shift+P, or a leading `>`, lists commands.
  */
-export function Palette({ mode, commands, onClose, onOpen, onCreate }: Props) {
+export function Palette({ mode, commands, onClose, onOpen, onOpenFile, onCreate }: Props) {
   const [query, setQuery] = useState(mode === 'commands' ? '>' : '')
   const [hits, setHits] = useState<SearchHit[]>([])
+  const [files, setFiles] = useState<AssetHit[]>([])
   const [selected, setSelected] = useState(0)
   const input = useRef<HTMLInputElement>(null)
   const commandMode = query.startsWith('>')
@@ -45,16 +48,17 @@ export function Palette({ mode, commands, onClose, onOpen, onCreate }: Props) {
   useEffect(() => {
     if (commandMode || !text) {
       setHits([])
+      setFiles([])
       setSelected(0)
       return
     }
     let cancelled = false
     const t = window.setTimeout(() => {
-      void api
-        .search(text, 20)
-        .then((h) => {
+      void Promise.all([api.search(text, 20), api.searchAssets(text, 8).catch(() => [] as AssetHit[])])
+        .then(([h, f]) => {
           if (!cancelled) {
             setHits(h)
+            setFiles(f)
             setSelected(0)
           }
         })
@@ -68,13 +72,14 @@ export function Palette({ mode, commands, onClose, onOpen, onCreate }: Props) {
 
   const rows: Row[] = commandMode
     ? filterCommands(commands, text).map((c) => ({ kind: 'cmd', c }))
-    : [...hits.map((h) => ({ kind: 'hit' as const, h })), ...(text && !hits.some((h) => h.title.toLowerCase() === text.toLowerCase()) ? [{ kind: 'new' as const }] : [])]
+    : [...hits.map((h) => ({ kind: 'hit' as const, h })), ...files.map((a) => ({ kind: 'file' as const, a })), ...(text && !hits.some((h) => h.title.toLowerCase() === text.toLowerCase()) ? [{ kind: 'new' as const }] : [])]
 
   const choose = (i: number, newTab = false) => {
     const row = rows[i]
     if (!row) return
     onClose()
     if (row.kind === 'hit') onOpen(row.h.id, newTab)
+    else if (row.kind === 'file') onOpenFile(row.a.path, newTab)
     else if (row.kind === 'new') onCreate(text)
     else row.c.run()
   }
@@ -105,12 +110,13 @@ export function Palette({ mode, commands, onClose, onOpen, onCreate }: Props) {
         />
         <ul className="modal__list">
           {rows.map((row, i) => (
-            <li key={row.kind === 'hit' ? row.h.id : row.kind === 'cmd' ? row.c.id : 'new'}>
+            <li key={row.kind === 'hit' ? row.h.id : row.kind === 'file' ? `file:${row.a.path}` : row.kind === 'cmd' ? row.c.id : 'new'}>
               <button type="button" className={`modal__row ${i === selected ? 'is-selected' : ''}`} onMouseMove={() => setSelected(i)} onClick={(e) => choose(i, e.ctrlKey || e.metaKey)}>
-                {row.kind === 'hit' ? <FileText size={16} /> : row.kind === 'new' ? <Plus size={16} /> : (row.c.icon ?? <ChevronRight size={16} />)}
+                {row.kind === 'hit' ? <FileText size={16} /> : row.kind === 'file' ? <KindIcon kind={row.a.kind} size={16} /> : row.kind === 'new' ? <Plus size={16} /> : (row.c.icon ?? <ChevronRight size={16} />)}
                 <span className="modal__row-text">
-                  <span className="modal__row-title">{row.kind === 'hit' ? row.h.title : row.kind === 'new' ? `Create “${text}”` : row.c.label}</span>
+                  <span className="modal__row-title">{row.kind === 'hit' ? row.h.title : row.kind === 'file' ? row.a.name : row.kind === 'new' ? `Create “${text}”` : row.c.label}</span>
                   {row.kind === 'hit' && <span className="modal__row-snippet">{renderSnippet(row.h.snippet)}</span>}
+                  {row.kind === 'file' && <span className="modal__row-snippet">{row.a.snippet.trim() ? renderSnippet(row.a.snippet) : row.a.path}</span>}
                 </span>
                 {row.kind === 'cmd' && row.c.shortcut && <kbd className="modal__row-key">{row.c.shortcut}</kbd>}
               </button>

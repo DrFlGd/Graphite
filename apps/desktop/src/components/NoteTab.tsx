@@ -19,17 +19,20 @@ interface Props {
   onEditorReady: (editor: Editor | null) => void
   onSaved: (note: Note) => void
   onFollowLink: (target: string) => void
+  onOpenFile: (src: string) => void
+  onOpenUrl: (href: string) => void
   onDelete: (note: Note) => void
   onError: (e: string) => void
   resolveSrc?: (src: string) => string
   pickImage: () => Promise<string | null>
+  pickFile: () => Promise<{ src: string; name: string } | null>
 }
 
 /**
  * One open note: loads it, autosaves edits (debounced, flushed on close),
  * reloads when the file changes underneath it, and attaches pasted files.
  */
-export function NoteTab({ noteId, active, changed, saved, patch, onActiveNote, onEditorReady, onSaved, onFollowLink, onDelete, onError, resolveSrc, pickImage }: Props) {
+export function NoteTab({ noteId, active, changed, saved, patch, onActiveNote, onEditorReady, onSaved, onFollowLink, onOpenFile, onOpenUrl, onDelete, onError, resolveSrc, pickImage, pickFile }: Props) {
   const [note, setNote] = useState<Note | null>(null)
   const [saveState, setSaveState] = useState<'saved' | 'dirty' | 'saving'>('saved')
   const pending = useRef<{ timer: number | null; note: Note | null }>({ timer: null, note: null })
@@ -162,9 +165,12 @@ export function NoteTab({ noteId, active, changed, saved, patch, onActiveNote, o
       saveState={saveState}
       onChange={change}
       onFollowLink={onFollowLink}
+      onOpenFile={onOpenFile}
+      onOpenUrl={onOpenUrl}
       onDelete={() => onDelete(note)}
       resolveSrc={resolveSrc}
       pickImage={pickImage}
+      pickFile={pickFile}
       onEditorReady={(ed) => {
         editor.current = ed
         if (active) onEditorReady(ed)

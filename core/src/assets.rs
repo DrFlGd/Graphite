@@ -808,6 +808,51 @@ impl Vault {
         asset
     }
 
+    /// Render one page of a PDF (1-based) to a JPEG under `.graphite/derived/`
+    /// and return its vault-relative path. Needs `pdftoppm`; pages are
+    /// rendered once and reused.
+    pub fn asset_page(&self, path: &str, page: u32) -> Result<String> {
+        let asset = self.asset(path)?;
+        if asset.kind != AssetKind::Pdf {
+            return Err(Error::NoteNotFound(format!("{path} is not a PDF")));
+        }
+        if !tools().pdftoppm {
+            return Err(Error::Io(std::io::Error::other("pdftoppm (poppler) is not installed")));
+        }
+        let page = page.max(1);
+        let key = asset
+            .hash
+            .as_deref()
+            .map(|h| h[..24].to_string())
+            .unwrap_or_else(|| format!("{:x}", Sha256::digest(asset.path.as_bytes()))[..24].to_string());
+        let dir = self.derived_dir();
+        fs::create_dir_all(&dir)?;
+        let name = format!("{key}-p{page}");
+        let out = dir.join(format!("{name}.jpg"));
+        if !out.is_file() {
+            let abs = self.safe_join(&asset.path)?;
+            let p = page.to_string();
+            let stem = dir.join(&name);
+            run(
+                "pdftoppm",
+                &[
+                    "-jpeg",
+                    "-r",
+                    "110",
+                    "-f",
+                    &p,
+                    "-l",
+                    &p,
+                    "-singlefile",
+                    &abs.to_string_lossy(),
+                    &stem.to_string_lossy(),
+                ],
+            )
+            .ok_or_else(|| Error::Io(std::io::Error::other(format!("could not render page {page}"))))?;
+        }
+        Ok(format!("{STATE_DIR}/{DERIVED_DIR}/{name}.jpg"))
+    }
+
     /// Absolute path of a file-system location inside the vault, for
     /// "open in default app" and "reveal in file manager".
     pub fn asset_abs_path(&self, path: &str) -> Result<PathBuf> {

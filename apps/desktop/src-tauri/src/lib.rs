@@ -344,6 +344,28 @@ fn asset_path(state: State<AppState>, path: String) -> CmdResult<String> {
     with_vault(&state, |v| Ok(v.asset_abs_path(&path)?.to_string_lossy().into_owned()))
 }
 
+/// Vault-relative path of a rendered PDF page image (1-based).
+#[tauri::command]
+fn asset_page(state: State<AppState>, path: String, page: u32) -> CmdResult<String> {
+    with_vault(&state, |v| v.asset_page(&path, page))
+}
+
+/// Open a file in the OS default application.
+#[tauri::command]
+fn open_asset(app: AppHandle, state: State<AppState>, path: String) -> CmdResult<()> {
+    use tauri_plugin_opener::OpenerExt;
+    let abs = with_vault(&state, |v| v.asset_abs_path(&path))?;
+    app.opener().open_path(abs.to_string_lossy(), None::<&str>).map_err(err)
+}
+
+/// Show a file in the OS file manager.
+#[tauri::command]
+fn reveal_asset(app: AppHandle, state: State<AppState>, path: String) -> CmdResult<()> {
+    use tauri_plugin_opener::OpenerExt;
+    let abs = with_vault(&state, |v| v.asset_abs_path(&path))?;
+    app.opener().reveal_item_in_dir(abs).map_err(err)
+}
+
 /// Re-derive one asset now (after "regenerate preview").
 #[tauri::command]
 fn derive_asset(state: State<AppState>, path: String) -> CmdResult<Asset> {
@@ -524,6 +546,9 @@ pub fn run() {
             asset_counts,
             search_assets,
             asset_path,
+            asset_page,
+            open_asset,
+            reveal_asset,
             derive_asset,
             derive_assets,
             tools,

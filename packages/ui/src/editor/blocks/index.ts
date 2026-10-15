@@ -5,6 +5,7 @@ import { bulletList, orderedList, taskList, gap } from './lists'
 import { codeBlock } from './codeBlock'
 import { table } from './table'
 import { image } from './image'
+import { file } from './fileEmbed'
 import { noteLink } from './noteLink'
 
 export type { BlockDef, BlockContext } from './types'
@@ -23,6 +24,7 @@ export const BLOCKS: BlockDef[] = [
   codeBlock,
   table,
   image,
+  file,
   divider,
   noteLink,
 ]
