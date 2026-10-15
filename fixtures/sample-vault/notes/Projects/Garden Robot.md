@@ -20,7 +20,8 @@ A small wheeled robot that waters raised beds on a schedule.
 ## Tasks
 
 - [x] Decide on wheel size
-- [ ] Order motors due:: 2026-11-01
+- [ ] Order motors due:: 2026-11-01 #p1
+  - [/] Compare motor drivers
 - [ ] Print [[Chassis v3]]
 - [?] How much current does the pump draw at 12 V?
 

@@ -67,6 +67,57 @@ export interface Graph {
   edges: GraphEdge[]
 }
 
+export type ItemKind = 'task' | 'gap'
+export type ItemStatus = 'open' | 'doing' | 'done' | 'cancelled' | 'answered'
+
+/** A `- [ ]` task or `- [?]` gap line in a note. */
+export interface Item {
+  note_id: string
+  /** 0-based line in the note body. */
+  line: number
+  kind: ItemKind
+  status: ItemStatus
+  text: string
+  raw: string
+  depth: number
+  parent: number | null
+  heading: string | null
+  due: string | null
+  priority: number | null
+  tags: string[]
+  /** Raw link target of `project:: [[X]]` on the item or an ancestor. */
+  project: string | null
+  answer: string | null
+  fields: Record<string, string>
+}
+
+export interface ItemRow extends Item {
+  note_title: string
+  note_path: string
+  project_id: string | null
+  project_title: string | null
+}
+
+export interface ItemFilter {
+  kind?: ItemKind | null
+  open_only?: boolean
+  note?: string | null
+  project?: string | null
+  due_before?: string | null
+  text?: string | null
+}
+
+export interface Progress {
+  tasks: number
+  done: number
+  doing: number
+  open: number
+  cancelled: number
+  gaps: number
+  gaps_open: number
+  percent: number
+}
+
 export const api = {
   openVault: (path: string) => invoke<VaultInfo>('open_vault', { path }),
   vaultInfo: () => invoke<VaultInfo | null>('vault_info'),
@@ -82,6 +133,11 @@ export const api = {
   followLink: (target: string) => invoke<string>('follow_link', { target }),
   graph: () => invoke<Graph>('graph'),
   localGraph: (id: string, hops = 1) => invoke<Graph>('local_graph', { id, hops }),
+  items: (filter: ItemFilter) => invoke<ItemRow[]>('items', { filter }),
+  progress: (projectId: string) => invoke<Progress>('progress', { projectId }),
+  setItemStatus: (noteId: string, line: number, status: ItemStatus) => invoke<Item>('set_item_status', { noteId, line, status }),
+  answerGap: (noteId: string, line: number, answer: string) => invoke<Item>('answer_gap', { noteId, line, answer }),
+  addItem: (noteId: string, kind: ItemKind, text: string) => invoke<Item>('add_item', { noteId, kind, text }),
   completeTitle: (prefix: string) => invoke<NoteSummary[]>('complete_title', { prefix }),
   rebuildIndex: () => invoke<number>('rebuild_index'),
   attachFile: (src: string, folder?: string) => invoke<string>('attach_file', { src, folder }),

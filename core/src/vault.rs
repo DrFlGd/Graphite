@@ -10,8 +10,9 @@ use ignore::WalkBuilder;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
-use crate::index::{Backlink, Index, SearchHit};
+use crate::index::{Backlink, Index, ItemFilter, ItemRow, SearchHit};
 use crate::note::{new_id, Note, NoteSummary};
+use crate::tasks::{self, Item, ItemKind, ItemStatus, Progress};
 
 pub const STATE_DIR: &str = ".graphite";
 pub const INDEX_FILE: &str = "index.sqlite";
@@ -269,6 +270,83 @@ impl Vault {
         self.index.summary(id)
     }
 
+    /// Tasks and gaps across the vault (see `ItemFilter`).
+    pub fn items(&self, filter: &ItemFilter) -> Result<Vec<ItemRow>> {
+        self.index.items(filter)
+    }
+
+    /// Task roll-up for a project: every task attributed to it, in any note.
+    pub fn progress(&self, project_id: &str) -> Result<Progress> {
+        let rows = self.index.items(&ItemFilter {
+            project: Some(project_id.to_string()),
+            ..Default::default()
+        })?;
+        Ok(Progress::of(rows.iter().map(|r| &r.item)))
+    }
+
+    /// Change a task's checkbox (`[ ]`, `[/]`, `[x]`, `[-]`) on one line of a
+    /// note. Gaps keep their `[?]`; use `answer_gap` for those.
+    pub fn set_item_status(&mut self, note_id: &str, line: usize, status: ItemStatus) -> Result<Item> {
+        let mut note = self.read(note_id)?;
+        let current = self.item_at(&note, line)?;
+        if current.kind == ItemKind::Gap {
+            return Err(Error::NotAnItem {
+                note: note_id.into(),
+                line,
+            });
+        }
+        note.body = tasks::set_marker(&note.body, line, status.task_marker()).ok_or_else(|| Error::NotAnItem {
+            note: note_id.into(),
+            line,
+        })?;
+        let note = self.write(&note)?;
+        self.item_at(&note, line)
+    }
+
+    /// Resolve a gap by recording where the answer is: appends
+    /// `answered:: [[target]]` to its line.
+    pub fn answer_gap(&mut self, note_id: &str, line: usize, target: &str) -> Result<Item> {
+        let mut note = self.read(note_id)?;
+        let current = self.item_at(&note, line)?;
+        if current.kind != ItemKind::Gap {
+            return Err(Error::NotAnItem {
+                note: note_id.into(),
+                line,
+            });
+        }
+        let value = format!("[[{}]]", tasks::link_target(target));
+        note.body = tasks::append_field(&note.body, line, "answered", &value).ok_or_else(|| Error::NotAnItem {
+            note: note_id.into(),
+            line,
+        })?;
+        let note = self.write(&note)?;
+        self.item_at(&note, line)
+    }
+
+    /// Add a task or gap to a note (under its `## Tasks` / `## Open questions`
+    /// heading when it has one, else at the end).
+    pub fn add_item(&mut self, note_id: &str, kind: ItemKind, text: &str) -> Result<Item> {
+        let text = text.trim();
+        if text.is_empty() {
+            return Err(Error::EmptyCapture);
+        }
+        let mut note = self.read(note_id)?;
+        let (body, line) = tasks::append_item(&note.body, kind, text);
+        note.body = body;
+        let note = self.write(&note)?;
+        self.item_at(&note, line)
+    }
+
+    fn item_at(&self, note: &Note, line: usize) -> Result<Item> {
+        tasks::parse_items(&note.id, &note.body)
+            .into_iter()
+            .find(|i| i.line == line)
+            .ok_or_else(|| Error::NotAnItem {
+                note: note.id.clone(),
+                line,
+            })
+    }
+
     /// Vault-relative path of a note by id, if indexed.
     pub fn path_of(&self, id: &str) -> Result<Option<String>> {
         self.index.path_of(id)
@@ -410,6 +488,82 @@ mod tests {
         fs::remove_file(dir.path().join(&n.path)).unwrap();
         assert_eq!(v.sync().unwrap(), 1);
         assert_eq!(v.list().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn items_are_indexed_attributed_and_editable() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut vault = Vault::open(dir.path()).unwrap();
+        let mut project = vault.create("Garden Robot", Some("project"), None).unwrap();
+        project.body =
+            "## Tasks\n\n- [ ] Order motors due:: 2026-11-01 #p1\n  - [?] Which motor?\n- [x] Sketch layout\n".into();
+        vault.write(&project).unwrap();
+        let mut daily = vault.create("2026-10-15", Some("daily"), None).unwrap();
+        daily.body = "- [ ] Call the supplier project:: [[Garden Robot]]\n- [ ] Unrelated chore\n".into();
+        vault.write(&daily).unwrap();
+        let mut log = vault.create("Build log", None, None).unwrap();
+        log.properties
+            .insert("project".into(), serde_json::Value::String("[[Garden Robot]]".into()));
+        log.body = "- [/] Print brackets\n".into();
+        vault.write(&log).unwrap();
+
+        let all = vault.items(&ItemFilter::default()).unwrap();
+        assert_eq!(all.len(), 6);
+        let mine = vault
+            .items(&ItemFilter {
+                project: Some(project.id.clone()),
+                ..Default::default()
+            })
+            .unwrap();
+        let texts: Vec<&str> = mine.iter().map(|r| r.item.text.as_str()).collect();
+        // Ordered by note path, then line.
+        assert_eq!(
+            texts,
+            vec![
+                "Call the supplier",
+                "Print brackets",
+                "Order motors",
+                "Which motor?",
+                "Sketch layout"
+            ]
+        );
+        assert!(mine.iter().all(|r| r.project_title.as_deref() == Some("Garden Robot")));
+        let open_tasks = vault
+            .items(&ItemFilter {
+                project: Some(project.id.clone()),
+                kind: Some(ItemKind::Task),
+                open_only: true,
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(open_tasks.len(), 3);
+
+        let p = vault.progress(&project.id).unwrap();
+        assert_eq!((p.tasks, p.done, p.doing, p.open, p.gaps_open), (4, 1, 1, 2, 1));
+        assert_eq!(p.percent, 25);
+
+        let done = vault.set_item_status(&project.id, 2, ItemStatus::Done).unwrap();
+        assert_eq!(done.status, ItemStatus::Done);
+        assert!(vault
+            .read(&project.id)
+            .unwrap()
+            .body
+            .contains("- [x] Order motors due:: 2026-11-01 #p1"));
+        assert!(
+            vault.set_item_status(&project.id, 3, ItemStatus::Done).is_err(),
+            "gaps are answered, not ticked"
+        );
+        let gap = vault.answer_gap(&project.id, 3, "Motor shortlist").unwrap();
+        assert_eq!(
+            (gap.status, gap.answer.as_deref()),
+            (ItemStatus::Answered, Some("Motor shortlist"))
+        );
+
+        let added = vault.add_item(&project.id, ItemKind::Task, "Wire it up").unwrap();
+        assert_eq!(added.heading.as_deref(), Some("Tasks"));
+        let body = vault.read(&project.id).unwrap().body;
+        assert!(body.contains("- [x] Sketch layout\n- [ ] Wire it up\n"), "{body}");
+        assert_eq!(vault.progress(&project.id).unwrap().tasks, 5);
     }
 
     #[test]

@@ -78,7 +78,28 @@ Following a link to a note that does not exist creates it in `notes/` with that 
 
 ### Tasks and gaps
 
-Tasks are GFM task-list items: `- [ ] text` / `- [x] text`. Inline fields on the item add properties: `- [ ] Order motors due:: 2026-11-01 #p1`. Gaps (information needs) are `- [?] I need to know …` and resolve by appending `answered:: [[Note]]`. The full task/gap model lands in M2; this syntax is reserved now so M1 notes stay valid.
+Tasks and gaps live inline in any note, as list items with a checkbox. Graphite indexes them (table `items`) so views can list, group and tick them, and edits made in a view rewrite only that line of the file.
+
+| Line | Meaning |
+| --- | --- |
+| `- [ ] text` | Open task |
+| `- [/] text` | Task in progress |
+| `- [x] text` | Done |
+| `- [-] text` | Cancelled (left out of progress) |
+| `- [?] text` | Gap: something that needs finding out |
+| `- [?] text answered:: [[Note]]` | Answered gap; the link is where the answer lives |
+
+Rules:
+
+- Any list marker works (`-`, `*`, `+`, `1.`), and items nest by indentation: an indented task under a task is its subtask, to any depth. Items inside fenced code are not items.
+- **Inline fields** on the line add properties: `- [ ] Order motors due:: 2026-11-01 priority:: p1`. A value runs to the next field or the first `#tag`. Reserved fields: `due` (`YYYY-MM-DD`), `priority` (`p1`–`p4`, or `high`/`medium`/`low`), `project` (`[[Project]]`), `answered` (`[[Note]]`), `blocks` (`[[Task note]]` a gap stands in the way of). Other fields are kept and shown as-is.
+- `#tags` anywhere on the line tag the item; `#p1`–`#p4` double as priority.
+- **Project attribution**, first match wins: a `project:: [[X]]` field on the item or on an ancestor item; the note's `project` front-matter property; the note itself when its `type` is `project`. Tasks in a daily note or a meeting note therefore roll up to the project they name, and tasks written in a project note need nothing extra.
+- A gap nested under a task is taken to block that task. Gaps are closed by answering them (`answered:: [[Note]]`), never by ticking.
+- The nearest heading above an item is recorded, so a `## Tasks` section can be shown as such. New tasks added through the app go under `## Tasks` (gaps under `## Open questions`) when the note has that heading, else at the end of the note.
+- A `type: task` note is a task that outgrew a line: its `status`, `due`, `priority` and `project` are front-matter properties and the tasks in its body are its subtasks.
+
+Progress for a project is the share of its done tasks over all its tasks except cancelled ones, counted across every note.
 
 ### Images and attachments in Markdown
 

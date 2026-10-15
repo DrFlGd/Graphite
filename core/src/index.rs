@@ -8,8 +8,9 @@ use serde::{Deserialize, Serialize};
 use crate::error::Result;
 use crate::links::{extract_links, normalise_target, LinkKind};
 use crate::note::{Note, NoteSummary};
+use crate::tasks::{parse_items, Item, ItemKind, ItemStatus};
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -61,6 +62,28 @@ CREATE TABLE IF NOT EXISTS links (
 CREATE INDEX IF NOT EXISTS links_from ON links(from_id);
 CREATE INDEX IF NOT EXISTS links_target ON links(target_norm);
 
+CREATE TABLE IF NOT EXISTS items (
+  note_id   TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+  line      INTEGER NOT NULL,
+  kind      TEXT NOT NULL,
+  status    TEXT NOT NULL,
+  text      TEXT NOT NULL,
+  raw       TEXT NOT NULL,
+  depth     INTEGER NOT NULL,
+  parent    INTEGER,
+  heading   TEXT,
+  due       TEXT,
+  priority  INTEGER,
+  tags      TEXT NOT NULL,
+  project   TEXT,
+  project_norm TEXT,
+  answer    TEXT,
+  fields    TEXT NOT NULL,
+  PRIMARY KEY (note_id, line)
+);
+CREATE INDEX IF NOT EXISTS items_kind_status ON items(kind, status);
+CREATE INDEX IF NOT EXISTS items_project ON items(project_norm);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
   id UNINDEXED, title, body, tags, tokenize = 'unicode61 remove_diacritics 2'
 );
@@ -81,6 +104,34 @@ pub struct Backlink {
     pub relation: Option<String>,
     pub kind: LinkKind,
     pub position: usize,
+}
+
+/// Which tasks/gaps to list.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ItemFilter {
+    pub kind: Option<ItemKind>,
+    /// Only `open` and `doing` items.
+    #[serde(default)]
+    pub open_only: bool,
+    /// Items in one note (id).
+    pub note: Option<String>,
+    /// Items belonging to one project (note id), however they were attributed.
+    pub project: Option<String>,
+    /// Items due on or before this `YYYY-MM-DD`.
+    pub due_before: Option<String>,
+    /// Case-insensitive substring of the item text.
+    pub text: Option<String>,
+}
+
+/// A task or gap with the note and project it belongs to.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ItemRow {
+    #[serde(flatten)]
+    pub item: Item,
+    pub note_title: String,
+    pub note_path: String,
+    pub project_id: Option<String>,
+    pub project_title: Option<String>,
 }
 
 pub struct Index {
@@ -129,7 +180,7 @@ impl Index {
 
     pub fn clear(&self) -> Result<()> {
         self.conn.execute_batch(
-            "DELETE FROM links; DELETE FROM properties; DELETE FROM aliases; DELETE FROM tags; DELETE FROM notes; DELETE FROM notes_fts;",
+            "DELETE FROM items; DELETE FROM links; DELETE FROM properties; DELETE FROM aliases; DELETE FROM tags; DELETE FROM notes; DELETE FROM notes_fts;",
         )?;
         Ok(())
     }
@@ -204,6 +255,30 @@ impl Index {
                     LinkKind::Embed => "embed",
                 },
                 l.position as i64
+            ])?;
+        }
+        for it in parse_items(&note.id, &note.body) {
+            tx.prepare_cached(
+                "INSERT INTO items(note_id, line, kind, status, text, raw, depth, parent, heading, due, priority, tags, project, project_norm, answer, fields)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)",
+            )?
+            .execute(params![
+                it.note_id,
+                it.line as i64,
+                it.kind.as_str(),
+                it.status.as_str(),
+                it.text,
+                it.raw,
+                it.depth as i64,
+                it.parent.map(|p| p as i64),
+                it.heading,
+                it.due,
+                it.priority.map(|p| p as i64),
+                it.tags.join(" "),
+                it.project,
+                it.project.as_deref().map(normalise_target),
+                it.answer,
+                serde_json::to_string(&it.fields).unwrap_or_else(|_| "{}".into()),
             ])?;
         }
         tx.prepare_cached("INSERT INTO notes_fts(rowid, id, title, body, tags) VALUES (?1, ?2, ?3, ?4, ?5)")?
@@ -496,6 +571,134 @@ impl Index {
             if let Some(s) = self.summary(&id)? {
                 out.push(s);
             }
+        }
+        Ok(out)
+    }
+
+    /// One front-matter property of a note as plain text: a string value
+    /// without its JSON quotes, anything else as its JSON form.
+    pub fn property(&self, note_id: &str, key: &str) -> Result<Option<String>> {
+        let raw: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT value FROM properties WHERE note_id = ?1 AND key = ?2",
+                params![note_id, key],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(raw.map(|v| match serde_json::from_str::<serde_json::Value>(&v) {
+            Ok(serde_json::Value::String(s)) => s,
+            _ => v,
+        }))
+    }
+
+    /// Tasks and gaps matching `f`, with the project each one belongs to
+    /// resolved: the item's own `project::` field, else the note's `project`
+    /// property, else the note itself when it is a project.
+    pub fn items(&self, f: &ItemFilter) -> Result<Vec<ItemRow>> {
+        let mut sql = String::from(
+            "SELECT i.note_id, i.line, i.kind, i.status, i.text, i.raw, i.depth, i.parent, i.heading, i.due, i.priority, i.tags, i.project, i.answer, i.fields, n.title, n.path, n.type
+             FROM items i JOIN notes n ON n.id = i.note_id WHERE 1=1",
+        );
+        let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        if let Some(k) = f.kind {
+            sql.push_str(" AND i.kind = ?");
+            args.push(Box::new(k.as_str().to_string()));
+        }
+        if f.open_only {
+            sql.push_str(" AND i.status IN ('open', 'doing')");
+        }
+        if let Some(n) = &f.note {
+            sql.push_str(" AND i.note_id = ?");
+            args.push(Box::new(n.clone()));
+        }
+        if let Some(d) = &f.due_before {
+            sql.push_str(" AND i.due IS NOT NULL AND i.due <= ?");
+            args.push(Box::new(d.clone()));
+        }
+        if let Some(t) = &f.text {
+            sql.push_str(" AND lower(i.text) LIKE ?");
+            args.push(Box::new(format!("%{}%", t.to_lowercase().replace('%', ""))));
+        }
+        sql.push_str(" ORDER BY n.path, i.line");
+        let mut stmt = self.conn.prepare(&sql)?;
+        let params_vec: Vec<&dyn rusqlite::ToSql> = args.iter().map(|a| a.as_ref()).collect();
+        let rows = stmt.query_map(params_vec.as_slice(), |r| {
+            Ok((
+                Item {
+                    note_id: r.get(0)?,
+                    line: r.get::<_, i64>(1)? as usize,
+                    kind: ItemKind::parse(&r.get::<_, String>(2)?).unwrap_or(ItemKind::Task),
+                    status: ItemStatus::parse(&r.get::<_, String>(3)?).unwrap_or(ItemStatus::Open),
+                    text: r.get(4)?,
+                    raw: r.get(5)?,
+                    depth: r.get::<_, i64>(6)? as usize,
+                    parent: r.get::<_, Option<i64>>(7)?.map(|p| p as usize),
+                    heading: r.get(8)?,
+                    due: r.get(9)?,
+                    priority: r.get::<_, Option<i64>>(10)?.map(|p| p as u8),
+                    tags: r.get::<_, String>(11)?.split_whitespace().map(str::to_string).collect(),
+                    project: r.get(12)?,
+                    answer: r.get(13)?,
+                    fields: serde_json::from_str(&r.get::<_, String>(14)?).unwrap_or_default(),
+                },
+                r.get::<_, String>(15)?,
+                r.get::<_, String>(16)?,
+                r.get::<_, String>(17)?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        let mut resolved: std::collections::HashMap<String, Option<String>> = Default::default();
+        let mut note_projects: std::collections::HashMap<String, Option<String>> = Default::default();
+        for row in rows {
+            let (item, note_title, note_path, note_type) = row?;
+            let project_id = match &item.project {
+                Some(target) => {
+                    let key = normalise_target(target);
+                    match resolved.get(&key) {
+                        Some(v) => v.clone(),
+                        None => {
+                            let v = self.resolve(target)?;
+                            resolved.insert(key, v.clone());
+                            v
+                        }
+                    }
+                }
+                None => match note_projects.get(&item.note_id) {
+                    Some(v) => v.clone(),
+                    None => {
+                        let v = if note_type == "project" {
+                            Some(item.note_id.clone())
+                        } else {
+                            match self.property(&item.note_id, "project")? {
+                                Some(p) => self.resolve(&crate::tasks::link_target(&p))?,
+                                None => None,
+                            }
+                        };
+                        note_projects.insert(item.note_id.clone(), v.clone());
+                        v
+                    }
+                },
+            };
+            if let Some(want) = &f.project {
+                if project_id.as_deref() != Some(want.as_str()) {
+                    continue;
+                }
+            }
+            let project_title = match &project_id {
+                Some(pid) => self
+                    .conn
+                    .query_row("SELECT title FROM notes WHERE id = ?1", params![pid], |r| r.get(0))
+                    .optional()?,
+                None => None,
+            };
+            out.push(ItemRow {
+                item,
+                note_title,
+                note_path,
+                project_id,
+                project_title,
+            });
         }
         Ok(out)
     }

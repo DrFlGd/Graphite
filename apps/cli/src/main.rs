@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use graphite_core::Vault;
+use graphite_core::{ItemFilter, ItemKind, ItemRow, ItemStatus, Vault};
 
 #[derive(Parser)]
 #[command(name = "graphite", version, about = "Graphite second-brain CLI")]
@@ -60,6 +60,47 @@ enum Cmd {
     Show { target: String },
     /// Notes linking to a note
     Backlinks { target: String },
+    /// Tasks (`- [ ]`) across the vault, open ones by default
+    Tasks {
+        /// Only tasks belonging to this project (id, title, alias or path)
+        #[arg(long)]
+        project: Option<String>,
+        /// Only tasks in this note
+        #[arg(long)]
+        note: Option<String>,
+        /// Include done and cancelled tasks
+        #[arg(long)]
+        all: bool,
+        /// Due on or before this date (YYYY-MM-DD)
+        #[arg(long)]
+        due: Option<String>,
+    },
+    /// Gaps (`- [?]` information needs), unanswered ones by default
+    Gaps {
+        #[arg(long)]
+        project: Option<String>,
+        #[arg(long)]
+        all: bool,
+    },
+    /// Tick a task: `graphite done <note> <line>` (line numbers come from `tasks`)
+    Done {
+        note: String,
+        line: usize,
+        /// Set a status other than done: open, doing, cancelled
+        #[arg(long)]
+        status: Option<String>,
+    },
+    /// Record the note that answers a gap
+    Answer { note: String, line: usize, answer: String },
+    /// Add a task (or a gap with --gap) to a note
+    Add {
+        note: String,
+        text: Vec<String>,
+        #[arg(long)]
+        gap: bool,
+    },
+    /// Task progress of a project
+    Progress { project: String },
     /// The link graph (all notes, or the neighbourhood of one)
     Graph {
         /// Only notes within --hops of this note (id, title, alias or path)
@@ -186,6 +227,63 @@ fn run() -> Result<()> {
                 }
             }
         }
+        Cmd::Tasks {
+            project,
+            note,
+            all,
+            due,
+        } => {
+            let filter = ItemFilter {
+                kind: Some(ItemKind::Task),
+                open_only: !all,
+                project: project.map(|p| resolve(&vault, &p)).transpose()?,
+                note: note.map(|n| resolve(&vault, &n)).transpose()?,
+                due_before: due,
+                text: None,
+            };
+            print_items(&vault.items(&filter)?, cli.json)?;
+        }
+        Cmd::Gaps { project, all } => {
+            let filter = ItemFilter {
+                kind: Some(ItemKind::Gap),
+                open_only: !all,
+                project: project.map(|p| resolve(&vault, &p)).transpose()?,
+                ..Default::default()
+            };
+            print_items(&vault.items(&filter)?, cli.json)?;
+        }
+        Cmd::Done { note, line, status } => {
+            let id = resolve(&vault, &note)?;
+            let status = match status.as_deref() {
+                None => ItemStatus::Done,
+                Some(s) => ItemStatus::parse(s).with_context(|| format!("unknown status '{s}'"))?,
+            };
+            let item = vault.set_item_status(&id, line, status)?;
+            println!("[{}] {}", item.status.task_marker(), item.text);
+        }
+        Cmd::Answer { note, line, answer } => {
+            let id = resolve(&vault, &note)?;
+            let item = vault.answer_gap(&id, line, &answer)?;
+            println!("answered: {} -> [[{}]]", item.text, item.answer.unwrap_or_default());
+        }
+        Cmd::Add { note, text, gap } => {
+            let id = resolve(&vault, &note)?;
+            let kind = if gap { ItemKind::Gap } else { ItemKind::Task };
+            let item = vault.add_item(&id, kind, &text.join(" "))?;
+            println!("{}:{}\t{}", item.note_id, item.line, item.text);
+        }
+        Cmd::Progress { project } => {
+            let id = resolve(&vault, &project)?;
+            let p = vault.progress(&id)?;
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&p)?);
+            } else {
+                println!(
+                    "{}% done: {} of {} tasks ({} doing, {} open, {} cancelled); {} open gaps of {}",
+                    p.percent, p.done, p.tasks, p.doing, p.open, p.cancelled, p.gaps_open, p.gaps
+                );
+            }
+        }
         Cmd::Backlinks { target } => {
             let id = resolve(&vault, &target)?;
             let links = vault.backlinks(&id)?;
@@ -200,6 +298,52 @@ fn run() -> Result<()> {
                 }
             }
         }
+    }
+    Ok(())
+}
+
+fn print_items(rows: &[ItemRow], json: bool) -> Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(rows)?);
+        return Ok(());
+    }
+    let mut last_note = "";
+    for r in rows {
+        if r.note_path != last_note {
+            println!("{}", r.note_title);
+            last_note = &r.note_path;
+        }
+        let marker = match r.item.kind {
+            ItemKind::Gap if r.item.status == ItemStatus::Answered => '!',
+            ItemKind::Gap => '?',
+            ItemKind::Task => r.item.status.task_marker(),
+        };
+        let mut extra = Vec::new();
+        if let Some(d) = &r.item.due {
+            extra.push(format!("due {d}"));
+        }
+        if let Some(p) = r.item.priority {
+            extra.push(format!("p{p}"));
+        }
+        if let Some(a) = &r.item.answer {
+            extra.push(format!("answered in [[{a}]]"));
+        }
+        if let Some(p) = &r.project_title {
+            if *p != r.note_title {
+                extra.push(format!("project {p}"));
+            }
+        }
+        let extra = if extra.is_empty() {
+            String::new()
+        } else {
+            format!("  ({})", extra.join(", "))
+        };
+        println!(
+            "  {:>4}  {}[{marker}] {}{extra}",
+            r.item.line,
+            "  ".repeat(r.item.depth),
+            r.item.text
+        );
     }
     Ok(())
 }
