@@ -65,6 +65,10 @@ export function FilesView({ vaultRoot, version, folder, compact, onOpen, onChang
   const [assets, setAssets] = useState<Asset[]>([])
   const [kind, setKind] = useState<AssetKind | null>(null)
   const [filter, setFilter] = useState('')
+  /** Files whose preview failed to load; they show their kind icon instead of a broken image. */
+  const [broken, setBroken] = useState<Set<string>>(() => new Set())
+  const markBroken = (path: string) => setBroken((b) => (b.has(path) ? b : new Set(b).add(path)))
+  useEffect(() => setBroken(new Set()), [version])
 
   useEffect(() => {
     let cancelled = false
@@ -131,10 +135,15 @@ export function FilesView({ vaultRoot, version, folder, compact, onOpen, onChang
         {shown.map((a) => (
           <button key={a.path} type="button" className="file-card" onClick={(e) => onOpen(a.path, e.ctrlKey || e.metaKey)} title={a.path}>
             <div className="file-card__thumb">
-              {a.thumbnail ? (
-                <img src={`${assetUrl(vaultRoot, a.thumbnail)}?v=${version}`} alt="" loading="lazy" />
+              {broken.has(a.path) ? (
+                <span className="file-card__icon">
+                  <KindIcon kind={a.kind} size={28} />
+                  <span className="file-card__ext">{a.ext || a.kind}</span>
+                </span>
+              ) : a.thumbnail ? (
+                <img src={`${assetUrl(vaultRoot, a.thumbnail)}?v=${version}`} alt="" loading="lazy" onError={() => markBroken(a.path)} />
               ) : a.kind === 'image' || (a.kind === 'vector' && a.ext === 'svg') ? (
-                <img src={`${assetUrl(vaultRoot, a.path)}?v=${version}`} alt="" loading="lazy" className={a.kind === 'vector' ? 'is-contain' : ''} />
+                <img src={`${assetUrl(vaultRoot, a.path)}?v=${version}`} alt="" loading="lazy" className={a.kind === 'vector' ? 'is-contain' : ''} onError={() => markBroken(a.path)} />
               ) : (
                 <span className="file-card__icon">
                   <KindIcon kind={a.kind} size={28} />

@@ -299,6 +299,12 @@ fn open_vault(app: AppHandle, state: State<AppState>, path: String) -> CmdResult
     let device_id = vault.device().id.clone();
     // Let the webview load images and other attachments from this vault via the asset protocol.
     app.asset_protocol_scope().allow_directory(&root, true).map_err(err)?;
+    // Thumbnails and PDF pages live under `.graphite/derived/`. On Unix the
+    // recursive pattern above does not match folders whose name starts with
+    // a dot, so the preview folder needs its own entry.
+    app.asset_protocol_scope()
+        .allow_directory(vault.derived_dir(), true)
+        .map_err(err)?;
     *state.vault.lock().map_err(err)? = Some(vault);
 
     // External edits: reindex the touched files and tell the UI which notes

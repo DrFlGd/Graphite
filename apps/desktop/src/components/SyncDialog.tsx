@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Check, Copy } from 'lucide-react'
 import { api, type SyncStatus, type VaultConfig } from '../api'
 import { ago } from './sync'
@@ -17,6 +17,7 @@ interface Props {
  */
 export function SyncDialog({ status, onStatus, onClose, onError }: Props) {
   const [url, setUrl] = useState('')
+  const card = useRef<HTMLDivElement>(null)
   const [invite, setInvite] = useState('')
   const [shown, setShown] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
@@ -80,9 +81,22 @@ export function SyncDialog({ status, onStatus, onClose, onError }: Props) {
     }
   }
 
+  // Like the other dialogs: Escape closes it, and focus moves into it so typing
+  // never lands in the note behind.
+  useEffect(() => {
+    card.current?.focus()
+  }, [])
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !busy) onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [busy, onClose])
+
   return (
     <div className="modal" onMouseDown={busy ? undefined : onClose}>
-      <div className="modal__card picker syncd" onMouseDown={(e) => e.stopPropagation()} role="dialog" aria-label="Sync">
+      <div ref={card} tabIndex={-1} className="modal__card picker syncd" onMouseDown={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Sync settings">
         <div className="syncd__body">
           <section>
             <h3>Devices</h3>
