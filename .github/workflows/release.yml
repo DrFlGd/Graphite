@@ -5,10 +5,12 @@ name: Release
 on:
   push:
     tags: ['v*']
+  # Run by hand from the Actions tab: enter the version (e.g. 0.1.0); the tag
+  # is created from the chosen branch if it does not exist yet.
   workflow_dispatch:
     inputs:
-      tag:
-        description: Existing tag to build and publish (e.g. v0.1.0)
+      version:
+        description: Version to release, without the leading v (e.g. 0.1.0)
         required: true
 
 permissions:
@@ -16,7 +18,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+  TAG: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', inputs.version) || github.ref_name }}
 
 jobs:
   draft:
@@ -24,6 +26,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check the version matches the app
+        run: |
+          v="${TAG#v}"
+          grep -q "\"version\": \"$v\"" apps/desktop/src-tauri/tauri.conf.json || { echo "tauri.conf.json is not at version $v"; exit 1; }
+          grep -q "^version = \"$v\"" Cargo.toml || { echo "Cargo.toml is not at version $v"; exit 1; }
+      - name: Create the tag if it does not exist
+        run: |
+          git fetch --tags --quiet
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "tag $TAG exists"
+          else
+            git config user.name github-actions
+            git config user.email github-actions@github.com
+            git tag -a "$TAG" -m "Graphite $TAG"
+            git push origin "$TAG"
+          fi
       - name: Create or reuse the draft release
         env:
           GH_TOKEN: ${{ github.token }}
