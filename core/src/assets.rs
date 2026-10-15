@@ -186,6 +186,8 @@ pub struct Tools {
     pub pdftoppm: bool,
     pub git: bool,
     pub yt_dlp: bool,
+    /// A Chromium-based browser for page screenshots.
+    pub browser: bool,
 }
 
 /// Probe the PATH once per process.
@@ -199,6 +201,7 @@ pub fn tools() -> &'static Tools {
         pdftoppm: find_tool("pdftoppm").is_some(),
         git: find_tool("git").is_some(),
         yt_dlp: find_tool("yt-dlp").is_some(),
+        browser: crate::sources::browser_binary().is_some(),
     })
 }
 

@@ -22,6 +22,9 @@ notify-debouncer-mini.workspace = true
 tracing.workspace = true
 sha2.workspace = true
 imagesize.workspace = true
+ureq.workspace = true
+scraper.workspace = true
+htmd.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
