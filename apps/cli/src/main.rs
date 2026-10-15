@@ -108,6 +108,30 @@ enum Cmd {
     },
     /// Show this device's id and name
     Device,
+    /// List a note's saved versions, newest first
+    History {
+        /// Note (title or id)
+        note: String,
+        /// Print one version's text instead of the list
+        #[arg(long)]
+        show: Option<String>,
+    },
+    /// Make a saved version the note's current content
+    Restore {
+        /// Note (title or id)
+        note: String,
+        /// Version id, as listed by `history`
+        version: String,
+    },
+    /// Zip the vault (everything but the .graphite cache) into the snapshot folder
+    Snapshot {
+        /// Folder to write into (default: .graphite/snapshots or $GRAPHITE_SNAPSHOT_DIR)
+        #[arg(long)]
+        to: Option<PathBuf>,
+        /// Only list the snapshots already taken
+        #[arg(long)]
+        list: bool,
+    },
     /// Turn a note (an idea, say) into a project, keeping its text
     Promote {
         target: String,
@@ -441,6 +465,69 @@ fn run() -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(d)?);
             } else {
                 println!("{}  {}", d.id, d.name);
+            }
+        }
+        Cmd::History { note, show } => {
+            let id = resolve(&vault, &note)?;
+            if let Some(version) = show {
+                print!("{}", vault.version_text(&id, &version)?);
+            } else {
+                let versions = vault.versions(&id)?;
+                if cli.json {
+                    println!("{}", serde_json::to_string_pretty(&versions)?);
+                } else if versions.is_empty() {
+                    println!("No saved versions yet.");
+                } else {
+                    for v in versions {
+                        println!(
+                            "{}  {}  {:>7}  {}",
+                            v.id,
+                            v.time.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+                            format_size(v.size as i64),
+                            v.title
+                        );
+                    }
+                }
+            }
+        }
+        Cmd::Restore { note, version } => {
+            let id = resolve(&vault, &note)?;
+            let n = vault.restore_version(&id, &version)?;
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&n)?);
+            } else {
+                println!("Restored {} from {version}", n.title);
+            }
+        }
+        Cmd::Snapshot { to, list } => {
+            if list {
+                let snaps = vault.snapshots(to.as_deref())?;
+                if cli.json {
+                    println!("{}", serde_json::to_string_pretty(&snaps)?);
+                } else if snaps.is_empty() {
+                    println!("No snapshots yet.");
+                } else {
+                    for s in snaps {
+                        println!(
+                            "{}  {:>8}  {}",
+                            s.time.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+                            format_size(s.size as i64),
+                            s.path
+                        );
+                    }
+                }
+            } else {
+                let s = vault.snapshot(to.as_deref())?;
+                if cli.json {
+                    println!("{}", serde_json::to_string_pretty(&s)?);
+                } else {
+                    println!(
+                        "{} ({} files, {})",
+                        s.path,
+                        s.files.unwrap_or(0),
+                        format_size(s.size as i64)
+                    );
+                }
             }
         }
         Cmd::Tools => {

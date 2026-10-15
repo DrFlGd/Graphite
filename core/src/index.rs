@@ -130,6 +130,12 @@ CREATE TABLE IF NOT EXISTS sync_notes (
   pending_since INTEGER,
   pending_text  TEXT
 );
+-- Content hash of the newest version in .graphite/history/ per note.
+CREATE TABLE IF NOT EXISTS history_latest (
+  note_id TEXT PRIMARY KEY,
+  hash    TEXT NOT NULL,
+  version TEXT NOT NULL
+);
 -- Which versions of other devices' documents this device has merged.
 CREATE TABLE IF NOT EXISTS sync_peers (
   device   TEXT NOT NULL,
@@ -252,7 +258,7 @@ impl Index {
 
     pub fn clear(&self) -> Result<()> {
         self.conn.execute_batch(
-            "DELETE FROM items; DELETE FROM links; DELETE FROM properties; DELETE FROM aliases; DELETE FROM tags; DELETE FROM notes; DELETE FROM notes_fts; DELETE FROM assets; DELETE FROM assets_fts; DELETE FROM sync_notes; DELETE FROM sync_peers;",
+            "DELETE FROM items; DELETE FROM links; DELETE FROM properties; DELETE FROM aliases; DELETE FROM tags; DELETE FROM notes; DELETE FROM notes_fts; DELETE FROM assets; DELETE FROM assets_fts; DELETE FROM sync_notes; DELETE FROM sync_peers; DELETE FROM history_latest;",
         )?;
         Ok(())
     }
@@ -1085,6 +1091,25 @@ impl Index {
     pub fn remove_sync_state(&self, note_id: &str) -> Result<()> {
         self.conn
             .execute("DELETE FROM sync_notes WHERE note_id = ?1", params![note_id])?;
+        Ok(())
+    }
+
+    pub fn history_latest(&self, note_id: &str) -> Result<Option<(String, String)>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT hash, version FROM history_latest WHERE note_id = ?1",
+                params![note_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?)
+    }
+
+    pub fn set_history_latest(&self, note_id: &str, hash: &str, version: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO history_latest(note_id, hash, version) VALUES (?1, ?2, ?3)",
+            params![note_id, hash, version],
+        )?;
         Ok(())
     }
 

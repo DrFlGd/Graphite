@@ -250,6 +250,24 @@ export interface SyncStatus {
   last_sync: string | null
 }
 
+/** One saved version of a note (`.graphite/history/`). */
+export interface Version {
+  id: string
+  note_id: string
+  time: string
+  device: string
+  size: number
+  title: string
+}
+
+export interface Snapshot {
+  path: string
+  name: string
+  time: string
+  size: number
+  files: number | null
+}
+
 export interface ProjectHub {
   project: NoteSummary
   progress: Progress
@@ -328,6 +346,12 @@ export const api = {
   /** Merge with the other devices now; turns sync on for the vault the first time. */
   syncNow: () => invoke<SyncReport>('sync_now'),
   syncStatus: () => invoke<SyncStatus>('sync_status'),
+  versions: (id: string) => invoke<Version[]>('versions', { id }),
+  versionNote: (id: string, version: string) => invoke<Note>('version_note', { id, version }),
+  restoreVersion: (id: string, version: string) => invoke<Note>('restore_version', { id, version }),
+  snapshotNow: () => invoke<Snapshot>('snapshot_now'),
+  snapshots: () => invoke<Snapshot[]>('snapshots'),
+  revealSnapshots: () => invoke<void>('reveal_snapshots'),
   /** Fires after every automatic sync pass. */
   onSyncDone: (cb: (report: SyncReport, status: SyncStatus) => void): Promise<UnlistenFn> =>
     listen<{ report: SyncReport; status: SyncStatus }>('sync://done', (e) => cb(e.payload.report, e.payload.status)),

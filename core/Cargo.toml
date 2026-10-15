@@ -27,6 +27,7 @@ scraper.workspace = true
 htmd.workspace = true
 automerge.workspace = true
 dirs.workspace = true
+zip.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

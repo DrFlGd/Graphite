@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
-import { ArrowUpRight, CalendarDays, Columns2, Download, FilePlus2, FolderOpen, Inbox, LayoutTemplate, ListChecks, Locate, Paperclip, RefreshCw, Search, SquareKanban, Trash2, Waypoints, X, Zap } from 'lucide-react'
+import { Archive, ArrowUpRight, CalendarDays, Columns2, Download, FilePlus2, FolderOpen, Inbox, LayoutTemplate, ListChecks, Locate, Paperclip, RefreshCw, Search, SquareKanban, Trash2, Waypoints, X, Zap } from 'lucide-react'
 import { insertAttachments, type AttachmentItem, type Editor } from '@graphite/ui'
 import { api, assetUrl, decodePath, INBOX_DIR, type Note, type NoteSummary, type SyncStatus, type VaultInfo } from './api'
 import { Sidebar } from './components/Sidebar'
@@ -38,6 +38,8 @@ export function App() {
   const [graphMode, setGraphMode] = useState<GraphMode>('global')
   const [palette, setPalette] = useState<{ mode: PaletteMode; newTab: boolean } | null>(null)
   const [error, setError] = useState<string | null>(null)
+  /** A short confirmation shown briefly at the bottom (for example, a snapshot saved). */
+  const [notice, setNotice] = useState<string | null>(null)
   /** Bumped when notes change so views that derive from the index refetch. */
   const [version, setVersion] = useState(0)
   /** Bumped when files or their previews change on disk. */
@@ -198,6 +200,21 @@ export function App() {
       void un.then((f) => f())
     }
   }, [vault])
+
+  useEffect(() => {
+    if (!notice) return
+    const t = window.setTimeout(() => setNotice(null), 4000)
+    return () => window.clearTimeout(t)
+  }, [notice])
+
+  const takeSnapshot = useCallback(async () => {
+    try {
+      const s = await api.snapshotNow()
+      setNotice(`Snapshot saved: ${s.name}`)
+    } catch (e) {
+      setError(String(e))
+    }
+  }, [])
 
   const syncNow = useCallback(async () => {
     setSyncing(true)
@@ -470,6 +487,8 @@ export function App() {
       { id: 'import', label: 'Import from URL…', shortcut: 'Ctrl+Shift+I', icon: <Download size={16} />, keywords: 'github repo clone web page article youtube video pdf source fetch', run: () => setImporting({}) },
       { id: 'sources', label: 'Show sources', icon: <Download size={16} />, keywords: 'imports repos pages videos updates', run: () => openSources() },
       { id: 'sync', label: syncStatus?.enabled ? 'Sync now' : 'Turn on sync', icon: <RefreshCw size={16} />, keywords: 'devices merge shared folder', run: () => void syncNow() },
+      { id: 'snapshot', label: 'Take a snapshot of the vault', icon: <Archive size={16} />, keywords: 'backup zip', run: () => void takeSnapshot() },
+      { id: 'snapshots', label: 'Show snapshots folder', icon: <Archive size={16} />, keywords: 'backups zip', run: () => void api.revealSnapshots().catch((e) => setError(String(e))) },
       ...(activeNote ? [{ id: 'attach', label: 'Attach a file to this note…', icon: <Paperclip size={16} />, keywords: 'upload insert embed', run: () => void pickFile().then((f) => f && activeEditor.current && insertAttachments(activeEditor.current, [f])) }] : []),
       { id: 'query', label: 'New saved query', icon: <SquareKanban size={16} />, keywords: 'view list table board filter', run: () => void saveQuery('type:task status:open sort:due', 'list') },
       { id: 'graph', label: 'Show graph of the whole vault', shortcut: 'Ctrl+Shift+G', icon: <Waypoints size={16} />, keywords: 'links network', run: () => showGraph('global') },
@@ -482,7 +501,7 @@ export function App() {
       { id: 'vault', label: 'Open another vault folder', icon: <FolderOpen size={16} />, keywords: 'switch', run: () => void pickVault() },
       { id: 'reindex', label: 'Rebuild the search index', icon: <RefreshCw size={16} />, keywords: 'reindex repair', run: () => void api.rebuildIndex().then(refreshList).catch((e) => setError(String(e))) },
     ],
-    [createNote, openToday, openInbox, openTasksView, openFiles, openSources, pickFile, saveQuery, showAsView, showGraph, lastNote, activeNote, deleteNote, pickVault, refreshList, syncNow, syncStatus],
+    [createNote, openToday, openInbox, openTasksView, openFiles, openSources, pickFile, saveQuery, showAsView, showGraph, lastNote, activeNote, deleteNote, pickVault, refreshList, syncNow, syncStatus, takeSnapshot],
   )
 
   if (!vault) return <Welcome onPick={pickVault} error={error} />
@@ -668,6 +687,11 @@ export function App() {
       {error && (
         <div className="app__error" role="alert" onClick={() => setError(null)}>
           {error}
+        </div>
+      )}
+      {notice && !error && (
+        <div className="app__notice" role="status" onClick={() => setNotice(null)}>
+          {notice}
         </div>
       )}
     </div>

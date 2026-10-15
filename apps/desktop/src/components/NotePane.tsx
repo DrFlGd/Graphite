@@ -1,8 +1,9 @@
 import { useCallback, useState } from 'react'
 import { NoteEditor, ToolButton, type Editor, type NoteCandidate } from '@graphite/ui'
-import { FileCode2, Trash2 } from 'lucide-react'
+import { FileCode2, History, Trash2 } from 'lucide-react'
 import { api, type Note } from '../api'
 import { SourceBar } from './SourceBar'
+import { HistoryPanel } from './HistoryPanel'
 
 interface Props {
   note: Note
@@ -24,6 +25,7 @@ interface Props {
 
 export function NotePane({ note, saveState, onChange, onFollowLink, onOpenFile, onOpenUrl, onDelete, resolveSrc, pickImage, pickFile, onEditorReady, onFiles, onReplace, onError }: Props) {
   const [raw, setRaw] = useState(false)
+  const [history, setHistory] = useState(false)
 
   const searchNotes = useCallback(async (q: string): Promise<NoteCandidate[]> => {
     const hits = await api.completeTitle(q)
@@ -45,6 +47,11 @@ export function NotePane({ note, saveState, onChange, onFollowLink, onOpenFile, 
             {note.path}
           </span>
           <span className={`note__save note__save--${saveState}`}>{saveState === 'saved' ? 'Saved' : saveState === 'saving' ? 'Saving…' : 'Unsaved'}</span>
+          {onReplace && (
+            <ToolButton label="History" active={history} onClick={() => setHistory((h) => !h)}>
+              <History size={16} />
+            </ToolButton>
+          )}
           <ToolButton label="Delete note" onClick={onDelete}>
             <Trash2 size={16} />
           </ToolButton>
@@ -52,6 +59,7 @@ export function NotePane({ note, saveState, onChange, onFollowLink, onOpenFile, 
       </header>
       <TagRow tags={note.tags} onChange={(tags) => onChange({ ...note, tags })} />
       {note.type === 'source' && onReplace && <SourceBar note={note} onReplace={onReplace} onOpenUrl={onOpenUrl} onError={onError ?? (() => {})} />}
+      <div className="note__body">
       {raw ? (
         <div className="note__raw">
           <div className="gr-toolbar">
@@ -84,6 +92,15 @@ export function NotePane({ note, saveState, onChange, onFollowLink, onOpenFile, 
           }
         />
       )}
+      {history && onReplace && (
+        <HistoryPanel
+          note={note}
+          onRestore={(n) => onReplace(n)}
+          onClose={() => setHistory(false)}
+          onError={onError ?? (() => {})}
+        />
+      )}
+      </div>
     </div>
   )
 }

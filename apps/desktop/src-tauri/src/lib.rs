@@ -8,8 +8,8 @@ use std::sync::Mutex;
 
 use graphite_core::{
     Asset, AssetHit, AssetKind, Backlink, Graph, ImportOptions, ImportReport, Item, ItemFilter, ItemKind, ItemRow,
-    ItemStatus, Note, NoteSummary, Progress, ProjectHub, QueryResult, SearchHit, SourceKind, SourceRow, SyncReport,
-    SyncStatus, Template, Tools, UpdateCheck, Vault, VaultInfo, Watcher,
+    ItemStatus, Note, NoteSummary, Progress, ProjectHub, QueryResult, SearchHit, Snapshot, SourceKind, SourceRow,
+    SyncReport, SyncStatus, Template, Tools, UpdateCheck, Vault, VaultInfo, Version, Watcher,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -24,6 +24,36 @@ struct AppState {
     syncing: AtomicBool,
     /// Whether the periodic sync thread has been started.
     sync_timer: AtomicBool,
+    /// Whether the daily snapshot thread has been started.
+    snapshot_timer: AtomicBool,
+}
+
+/// Take a vault snapshot if the newest is a day old, and check again every
+/// hour while the app runs.
+fn start_snapshot_timer(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    if state.snapshot_timer.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let handle = app.clone();
+    std::thread::spawn(move || loop {
+        // Give the open a moment to settle before a possibly long zip.
+        std::thread::sleep(std::time::Duration::from_secs(30));
+        let state = handle.state::<AppState>();
+        let taken = state.vault.lock().ok().and_then(|guard| {
+            guard
+                .as_ref()
+                .map(|v| v.snapshot_if_due(graphite_core::snapshot::DEFAULT_SNAPSHOT_INTERVAL))
+        });
+        match taken {
+            Some(Ok(Some(snapshot))) => {
+                let _ = handle.emit("snapshot://taken", snapshot);
+            }
+            Some(Err(e)) => tracing::warn!("snapshot: {e}"),
+            _ => {}
+        }
+        std::thread::sleep(std::time::Duration::from_secs(3600));
+    });
 }
 
 /// Payload of the `sync://done` event, sent after every automatic pass.
@@ -230,7 +260,53 @@ fn open_vault(app: AppHandle, state: State<AppState>, path: String) -> CmdResult
     let h = app.clone();
     std::thread::spawn(move || run_sync(&h));
     start_sync_timer(&app);
+    start_snapshot_timer(&app);
     Ok(info)
+}
+
+#[tauri::command]
+fn versions(state: State<AppState>, id: String) -> CmdResult<Vec<Version>> {
+    with_vault(&state, |v| v.versions(&id))
+}
+
+#[tauri::command]
+fn version_note(state: State<AppState>, id: String, version: String) -> CmdResult<Note> {
+    with_vault(&state, |v| v.version_note(&id, &version))
+}
+
+#[tauri::command]
+fn restore_version(state: State<AppState>, id: String, version: String) -> CmdResult<Note> {
+    with_vault(&state, |v| v.restore_version(&id, &version))
+}
+
+/// Zip the vault into the snapshot folder now.
+#[tauri::command]
+async fn snapshot_now(app: AppHandle) -> CmdResult<Snapshot> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let guard = state.vault.lock().map_err(err)?;
+        let vault = guard.as_ref().ok_or_else(|| "no vault open".to_string())?;
+        vault.snapshot(None).map_err(err)
+    })
+    .await
+    .map_err(err)?
+}
+
+#[tauri::command]
+fn snapshots(state: State<AppState>) -> CmdResult<Vec<Snapshot>> {
+    with_vault(&state, |v| v.snapshots(None))
+}
+
+/// Show the snapshot folder in the file manager.
+#[tauri::command]
+fn reveal_snapshots(app: AppHandle, state: State<AppState>) -> CmdResult<()> {
+    use tauri_plugin_opener::OpenerExt;
+    let dir = with_vault(&state, |v| {
+        let d = v.snapshot_dir();
+        std::fs::create_dir_all(&d)?;
+        Ok(d)
+    })?;
+    app.opener().open_path(dir.to_string_lossy(), None::<&str>).map_err(err)
 }
 
 /// Run a sync pass now (turning sync on for this vault if it was off).
@@ -747,6 +823,12 @@ pub fn run() {
             classify_url,
             sync_now,
             sync_status,
+            versions,
+            version_note,
+            restore_version,
+            snapshot_now,
+            snapshots,
+            reveal_snapshots,
             attach_file,
             attach_data,
             capture,
