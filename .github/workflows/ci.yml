@@ -81,3 +81,42 @@ jobs:
             target/release/graphite-desktop.exe
           if-no-files-found: ignore
           retention-days: 7
+
+  android:
+    name: Android app build
+    needs: [core, ui]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools ndk;27.2.12479018
+      - run: echo "NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: '. -> target'
+          key: android
+      - run: pnpm install --frozen-lockfile
+      - name: Build APK (arm64)
+        run: pnpm --filter @graphite/desktop tauri android build --apk --target aarch64
+      - name: Sign with a throwaway key
+        run: bash scripts/sign-apk.sh out
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'push'
+        continue-on-error: true
+        with:
+          name: graphite-android
+          path: out/*.apk
+          retention-days: 7

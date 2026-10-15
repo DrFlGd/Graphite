@@ -9,7 +9,7 @@ dist
 .vite
 
 # Tauri
-apps/desktop/src-tauri/gen
+apps/desktop/src-tauri/gen/schemas
 
 # Vault runtime state (never commit an index)
 .graphite/

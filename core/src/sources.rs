@@ -212,14 +212,21 @@ fn other(msg: impl Into<String>) -> Error {
     Error::Io(std::io::Error::other(msg.into()))
 }
 
+/// TLS for every outgoing connection. The platform verifier trusts the OS
+/// certificate store, so corporate proxies and SSL_CERT_FILE work as they
+/// do for the browser; Android has no such store reachable from Rust, so
+/// the bundled web PKI roots are used there.
+pub(crate) fn tls_config() -> ureq::tls::TlsConfig {
+    #[cfg(not(target_os = "android"))]
+    let roots = ureq::tls::RootCerts::PlatformVerifier;
+    #[cfg(target_os = "android")]
+    let roots = ureq::tls::RootCerts::WebPki;
+    ureq::tls::TlsConfig::builder().root_certs(roots).build()
+}
+
 fn agent() -> ureq::Agent {
-    // The platform verifier trusts the OS certificate store, so corporate proxies
-    // and SSL_CERT_FILE work as they do for the browser.
-    let tls = ureq::tls::TlsConfig::builder()
-        .root_certs(ureq::tls::RootCerts::PlatformVerifier)
-        .build();
     ureq::Agent::config_builder()
-        .tls_config(tls)
+        .tls_config(tls_config())
         .user_agent(USER_AGENT)
         .timeout_global(Some(Duration::from_secs(60)))
         .max_redirects(10)

@@ -54,10 +54,19 @@ pub fn new_id() -> String {
     automerge::ActorId::random().to_hex_string()
 }
 
+/// Where Graphite keeps per-device state outside any vault: the device id
+/// and relay settings. `GRAPHITE_CONFIG_DIR` overrides the OS config
+/// directory (the Android app sets it to its private storage, which has
+/// no home directory).
+pub fn config_dir() -> Option<PathBuf> {
+    if let Some(d) = std::env::var_os("GRAPHITE_CONFIG_DIR").filter(|d| !d.is_empty()) {
+        return Some(PathBuf::from(d));
+    }
+    dirs::config_dir().or_else(dirs::home_dir).map(|d| d.join("graphite"))
+}
+
 fn id_file() -> Option<PathBuf> {
-    dirs::config_dir()
-        .or_else(dirs::home_dir)
-        .map(|d| d.join("graphite").join("device-id"))
+    config_dir().map(|d| d.join("device-id"))
 }
 
 fn stored_or_new_id() -> String {

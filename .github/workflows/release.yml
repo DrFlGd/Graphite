@@ -140,9 +140,47 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$TAG" out/* --repo "$GITHUB_REPOSITORY" --clobber
 
+  android:
+    name: Build Android APK
+    needs: draft
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools ndk;27.2.12479018
+      - run: echo "NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: '. -> target'
+          key: android
+      - run: pnpm install --frozen-lockfile
+      - name: Build APK (arm64)
+        run: pnpm --filter @graphite/desktop tauri android build --apk --target aarch64
+      - name: Sign with a throwaway key
+        run: bash scripts/sign-apk.sh out "graphite-$TAG-android-arm64.apk"
+      - name: Upload to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" out/*.apk --repo "$GITHUB_REPOSITORY" --clobber
+
   publish:
     name: Publish release
-    needs: build
+    needs: [build, android]
     runs-on: ubuntu-latest
     steps:
       # The workflow's own ref, not the tag: release notes may be added to the

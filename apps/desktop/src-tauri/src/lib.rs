@@ -869,7 +869,51 @@ fn folders(state: State<AppState>) -> CmdResult<Vec<String>> {
     with_vault(&state, |v| v.folders())
 }
 
+/// `android`, `ios`, `linux`, `macos` or `windows`: the UI picks the
+/// phone layout from this.
+#[tauri::command]
+fn platform() -> &'static str {
+    std::env::consts::OS
+}
+
+/// The vault a phone opens without asking: `vault/` in the app's private
+/// storage, created on first use. Desktops pick a folder instead.
+#[tauri::command]
+fn default_vault(app: AppHandle) -> CmdResult<String> {
+    let dir = app.path().app_data_dir().map_err(err)?.join("vault");
+    std::fs::create_dir_all(&dir).map_err(err)?;
+    Ok(dir.to_string_lossy().into_owned())
+}
+
+/// Something shared into the app from another app (Android share sheet).
+#[derive(Serialize, serde::Deserialize, Clone, Default)]
+struct Shared {
+    #[serde(default)]
+    text: String,
+    #[serde(default)]
+    subject: String,
+    /// Absolute paths of files the share handed over, already copied into
+    /// the app's storage.
+    #[serde(default)]
+    files: Vec<String>,
+}
+
+/// Captures waiting from the share sheet, oldest first; emptied by the
+/// call. The native side appends to `shared/pending.json` in the app's
+/// data directory, one object per share.
+#[tauri::command]
+fn take_shared(app: AppHandle) -> CmdResult<Vec<Shared>> {
+    let dir = app.path().app_data_dir().map_err(err)?.join("shared");
+    let file = dir.join("pending.json");
+    let Ok(text) = std::fs::read_to_string(&file) else {
+        return Ok(Vec::new());
+    };
+    let _ = std::fs::remove_file(&file);
+    serde_json::from_str(&text).map_err(err)
+}
+
 /// Hide the quick-capture window (Esc / after saving).
+#[cfg(desktop)]
 #[tauri::command]
 fn hide_capture_window(app: AppHandle) -> CmdResult<()> {
     if let Some(w) = app.get_webview_window(CAPTURE_WINDOW) {
@@ -879,12 +923,14 @@ fn hide_capture_window(app: AppHandle) -> CmdResult<()> {
 }
 
 /// Show or hide the quick-capture window (same as the global shortcut).
+#[cfg(desktop)]
 #[tauri::command]
 fn toggle_capture_window(app: AppHandle) {
     toggle_capture_window_impl(&app);
 }
 
 /// Bring the main window forward and open a note there (from the capture window).
+#[cfg(desktop)]
 #[tauri::command]
 fn open_in_main(app: AppHandle, id: String) -> CmdResult<()> {
     if let Some(w) = app.get_webview_window("main") {
@@ -895,10 +941,13 @@ fn open_in_main(app: AppHandle, id: String) -> CmdResult<()> {
     app.emit_to("main", "note://open", id).map_err(err)
 }
 
+#[cfg(desktop)]
 const CAPTURE_WINDOW: &str = "capture";
+#[cfg(desktop)]
 pub const CAPTURE_SHORTCUT: &str = "CmdOrCtrl+Shift+Space";
 
 /// Show the capture window (or hide it if it is already in front).
+#[cfg(desktop)]
 fn toggle_capture_window_impl(app: &AppHandle) {
     let Some(w) = app.get_webview_window(CAPTURE_WINDOW) else {
         tracing::warn!("no capture window");
@@ -914,31 +963,45 @@ fn toggle_capture_window_impl(app: &AppHandle) {
     let _ = app.emit_to(CAPTURE_WINDOW, "capture://shown", ());
 }
 
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .init();
 
+    let builder = tauri::Builder::default();
     // The global shortcut registers at plugin setup; on platforms that refuse
     // (some Wayland sessions) the app still runs, only without the hotkey.
-    let shortcuts = tauri_plugin_global_shortcut::Builder::new()
-        .with_handler(|app, _shortcut, event| {
-            if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
-                toggle_capture_window_impl(app);
-            }
-        })
-        .with_shortcut(CAPTURE_SHORTCUT)
-        .unwrap_or_else(|e| {
-            tracing::warn!("capture shortcut not registered: {e}");
-            tauri_plugin_global_shortcut::Builder::new()
-        })
-        .build();
+    #[cfg(desktop)]
+    let builder = builder.plugin(
+        tauri_plugin_global_shortcut::Builder::new()
+            .with_handler(|app, _shortcut, event| {
+                if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                    toggle_capture_window_impl(app);
+                }
+            })
+            .with_shortcut(CAPTURE_SHORTCUT)
+            .unwrap_or_else(|e| {
+                tracing::warn!("capture shortcut not registered: {e}");
+                tauri_plugin_global_shortcut::Builder::new()
+            })
+            .build(),
+    );
 
-    tauri::Builder::default()
+    builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .plugin(shortcuts)
         .manage(AppState::default())
+        .setup(|app| {
+            // Phones have no home directory: keep the device id and relay
+            // settings in the app's private storage instead.
+            #[cfg(mobile)]
+            if let Ok(dir) = app.path().app_data_dir() {
+                std::env::set_var("GRAPHITE_CONFIG_DIR", dir.join("config"));
+            }
+            let _ = app;
+            Ok(())
+        })
         // The hidden capture window would otherwise keep the process alive after
         // the main window closes.
         .on_window_event(|window, event| {
@@ -1011,12 +1074,18 @@ pub fn run() {
             attach_file,
             attach_data,
             capture,
+            platform,
+            default_vault,
+            take_shared,
             daily_note,
             move_note,
             set_note_type,
             folders,
+            #[cfg(desktop)]
             hide_capture_window,
+            #[cfg(desktop)]
             toggle_capture_window,
+            #[cfg(desktop)]
             open_in_main,
         ])
         .run(tauri::generate_context!())
