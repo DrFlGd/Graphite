@@ -112,13 +112,20 @@ jobs:
             cargo build --release -p graphite-cli
             cp target/release/${{ matrix.cli }} out/
           fi
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            cargo build --release -p graphite-relay
+            cp target/release/graphite-relay out/
+          fi
           cd out
           if [ "${{ runner.os }}" = "Windows" ]; then
             7z a -tzip "graphite-cli-$TAG-${{ matrix.name }}.zip" graphite.exe
           else
             tar czf "graphite-cli-$TAG-${{ matrix.name }}.tar.gz" graphite
           fi
-          rm -f graphite graphite.exe
+          if [ -f graphite-relay ]; then
+            tar czf "graphite-relay-$TAG-${{ matrix.name }}.tar.gz" graphite-relay
+          fi
+          rm -f graphite graphite.exe graphite-relay
 
       - name: Collect installers
         shell: bash

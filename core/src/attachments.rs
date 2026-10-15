@@ -10,6 +10,8 @@ use crate::vault::{Vault, ATTACHMENTS_DIR};
 impl Vault {
     /// Copy a file from anywhere on disk into `attachments/` (or `folder`)
     /// and return its vault-relative path, the form that goes into Markdown.
+    /// A file larger than the vault's large-file limit is not copied: the
+    /// result is then a `file://` URL to where it is.
     pub fn import_attachment(&self, src: &Path, folder: Option<&str>) -> Result<String> {
         let name = src
             .file_name()
@@ -22,8 +24,14 @@ impl Vault {
             )));
         }
         // A file already inside the vault is referenced where it is.
-        if let Ok(rel) = self.rel(&src.canonicalize()?) {
+        let abs = src.canonicalize()?;
+        if let Ok(rel) = self.rel(&abs) {
             return Ok(rel);
+        }
+        // So is one over the large-file limit (E9): the link points at it
+        // on this device rather than copying it into the vault.
+        if fs::metadata(&abs)?.len() > self.large_file_bytes() {
+            return Ok(file_url(&abs));
         }
         let (rel, dest) = self.free_attachment_path(folder, name)?;
         fs::copy(src, &dest)?;
@@ -62,6 +70,25 @@ impl Vault {
 
 /// Keep attachment names portable: strip path separators and control
 /// characters, fall back to `file` when nothing is left.
+/// A `file://` URL for an absolute path, with `/` separators and the
+/// characters Markdown or a browser would trip over percent-encoded.
+pub fn file_url(abs: &Path) -> String {
+    let text = abs.to_string_lossy().replace('\\', "/");
+    let mut out = String::from("file://");
+    if !text.starts_with('/') {
+        out.push('/');
+    }
+    for b in text.bytes() {
+        let keep = b.is_ascii_alphanumeric() || b"/-._~:".contains(&b);
+        if keep {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
 pub fn safe_attachment_name(name: &str) -> String {
     let cleaned: String = name
         .chars()
@@ -101,6 +128,24 @@ mod tests {
         let again = v.import_attachment(&dir.path().join(&a), None).unwrap();
         assert_eq!(again, a);
         assert!(v.import_attachment(&src.path().join("missing.png"), None).is_err());
+    }
+
+    #[test]
+    fn large_files_are_referenced_in_place() {
+        let dir = tempfile::tempdir().unwrap();
+        let v = Vault::open(dir.path()).unwrap();
+        v.save_config(&crate::config::VaultConfig { large_file_mb: 0 }).unwrap();
+        let src = tempfile::tempdir().unwrap();
+        let file = src.path().join("big movie.mov");
+        fs::write(&file, b"mov").unwrap();
+        let link = v.import_attachment(&file, None).unwrap();
+        assert!(link.starts_with("file:///"), "{link}");
+        assert!(link.ends_with("/big%20movie.mov"), "{link}");
+        assert!(!dir.path().join("attachments/big movie.mov").exists());
+        assert_eq!(
+            file_url(Path::new("C:\\Users\\me\\a b.png")),
+            "file:///C:/Users/me/a%20b.png"
+        );
     }
 
     #[test]

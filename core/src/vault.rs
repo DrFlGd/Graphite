@@ -39,6 +39,8 @@ pub struct Vault {
     pub(crate) device: Device,
     pub(crate) delete_grace: std::time::Duration,
     pub(crate) absorb_delay: std::time::Duration,
+    /// Relay settings for this vault on this device (see `relay.rs`).
+    pub(crate) relay: Option<crate::relay::RelayConfig>,
 }
 
 impl Vault {
@@ -70,12 +72,14 @@ impl Vault {
             let _ = fs::remove_file(state.join(legacy));
         }
         let index = Index::open(&device_dir.join(INDEX_FILE))?;
+        let relay = crate::relay::load_config(&root);
         let mut vault = Vault {
             root,
             index,
             device,
             delete_grace: crate::sync::DEFAULT_DELETE_GRACE,
             absorb_delay: crate::sync::DEFAULT_ABSORB_DELAY,
+            relay,
         };
         vault.sync()?;
         Ok(vault)
