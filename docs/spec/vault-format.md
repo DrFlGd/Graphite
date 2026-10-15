@@ -104,7 +104,18 @@ Progress for a project is the share of its done tasks over all its tasks except 
 
 ### Images and attachments in Markdown
 
-Standard syntax with a vault-relative path: `![alt](attachments/Garden Robot/chassis.png)`. Paths are relative to the vault root, use `/`, and never start with `/` or contain `..`.
+Standard syntax with a vault-relative path: `![alt](attachments/Garden Robot/chassis.png)`. Paths are relative to the vault root, use `/`, and never start with `/` or contain `..`. A relative path in `[text](path)` or `![alt](path)` with no scheme is a **file link** and is indexed (kind `file`), so an asset knows which notes reference it; `![[chassis.stl]]` embeds the file by name. A relative `.md` path is an ordinary note link.
+
+### Assets (M3)
+
+Every non-Markdown file in the vault (outside `.graphite/` and hidden folders) is an **asset**, keyed by its vault-relative path, which is stable so external tools can link back to it. The file is never modified: everything Graphite learns about it goes in the index and everything it generates goes under `.graphite/derived/`.
+
+- **Kind** follows the extension: `image`, `vector` (SVG, AI, EPS, DXF), `video`, `audio`, `pdf`, `model` (glTF/GLB, OBJ, STL, PLY, 3MF, STEP/IGES, FBX…), `code`, `data` (CSV, JSON, YAML, XML, spreadsheets), `document`, `archive`, `other`.
+- **Metadata** recorded at index time, from the file alone: size, modified time, image or SVG dimensions, model bounding box and dimensions (STL, OBJ, glTF), CSV rows and columns. Derived afterwards, in the background: SHA-256 content hash, video/audio duration, dimensions and codecs (ffprobe), PDF page count, title and author (pdfinfo).
+- **Derived files** under `.graphite/derived/`, named by the first 24 hex characters of the content hash: `<hash>.jpg` thumbnails (video frame, PDF first page, images, via ffmpeg and pdftoppm) and `<hash>.txt` extracted text (PDF text via pdftotext; code and data files verbatim up to 2 MB). Extracted text and file names are full-text searchable alongside notes. Missing tools simply mean no thumbnail or text; nothing else changes.
+- **Folders** are a convention: `attachments/<Project>/` for a project's own files, `attachments/` for shared ones, `attachments/sources/` for imported content. An asset can be referenced from any number of notes and projects without copying.
+- A note with `type: asset` and a `file` property naming the path can carry tags, properties and prose about a file; the file itself stays untouched.
+- Editing a file in another app is picked up by the watcher: the asset is re-indexed and its previews regenerated.
 
 ### Captures and daily notes
 
@@ -151,7 +162,7 @@ New notes are written as `<folder>/<Title>.md`, with characters that are illegal
 
 ## Index (`.graphite/index.sqlite`)
 
-SQLite. Tables: `notes`, `tags`, `aliases`, `properties`, `links`, `items` (tasks and gaps), and the FTS5 table `notes_fts`. The schema version lives in `meta`; any mismatch triggers a rebuild. The index is kept current by mtime+size comparison on each sync and by a file watcher while an app is open.
+SQLite. Tables: `notes`, `tags`, `aliases`, `properties`, `links`, `items` (tasks and gaps), `assets`, and the FTS5 tables `notes_fts` and `assets_fts` (file names and extracted text). The schema version lives in `meta`; any mismatch triggers a rebuild. The index is kept current by mtime+size comparison on each sync and by a file watcher while an app is open.
 
 ## Identity and stability
 

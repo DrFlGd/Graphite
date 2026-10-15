@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use graphite_core::{Domain, ItemFilter, ItemKind, ItemRow, ItemStatus, Vault};
+use graphite_core::{assets::format_size, AssetKind, Domain, ItemFilter, ItemKind, ItemRow, ItemStatus, Vault};
 
 #[derive(Parser)]
 #[command(name = "graphite", version, about = "Graphite second-brain CLI")]
@@ -52,6 +52,24 @@ enum Cmd {
     },
     /// List templates: built-in ones plus templates/*.md in the vault
     Templates,
+    /// List files (assets) in the vault, newest first
+    Assets {
+        /// Only this kind: image, vector, video, audio, pdf, model, code, data, document, archive, other
+        #[arg(long, short = 'k')]
+        kind: Option<String>,
+        /// Only paths containing this text
+        filter: Option<String>,
+    },
+    /// Show one file's metadata, previews and the notes that reference it
+    Asset { path: String },
+    /// Compute hashes, metadata, thumbnails and searchable text for files not yet processed
+    Derive {
+        /// Stop after this many files (default: all)
+        #[arg(long)]
+        limit: Option<usize>,
+    },
+    /// Which optional tools (ffmpeg, poppler, git, yt-dlp) were found on the PATH
+    Tools,
     /// Turn a note (an idea, say) into a project, keeping its text
     Promote {
         target: String,
@@ -176,12 +194,109 @@ fn run() -> Result<()> {
             }
         }
         Cmd::Search { query, limit } => {
-            let hits = vault.search(&query.join(" "), limit)?;
+            let q = query.join(" ");
+            let hits = vault.search(&q, limit)?;
+            let files = vault.search_assets(&q, limit)?;
             if cli.json {
-                println!("{}", serde_json::to_string_pretty(&hits)?);
+                println!("{}", serde_json::json!({ "notes": hits, "files": files }));
             } else {
                 for h in hits {
                     println!("{}  {}\n    {}", h.id, h.title, h.snippet.replace('\n', " "));
+                }
+                for f in files {
+                    println!("{}  {}\n    {}", f.kind.as_str(), f.path, f.snippet.replace('\n', " "));
+                }
+            }
+        }
+        Cmd::Assets { kind, filter } => {
+            let kind = kind.as_deref().map(AssetKind::parse);
+            let assets = vault.assets(kind, filter.as_deref())?;
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&assets)?);
+            } else {
+                for a in assets {
+                    println!("{:<9} {:>9}  {}", a.kind.as_str(), format_size(a.size), a.path);
+                }
+            }
+        }
+        Cmd::Asset { path } => {
+            let asset = vault.asset(&path)?;
+            let refs = vault.asset_references(&asset.path)?;
+            if cli.json {
+                println!("{}", serde_json::json!({ "asset": asset, "references": refs }));
+            } else {
+                println!(
+                    "{}\n  kind {}  size {}  modified {}",
+                    asset.path,
+                    asset.kind.as_str(),
+                    format_size(asset.size),
+                    asset.modified.to_rfc3339()
+                );
+                if let (Some(w), Some(h)) = (asset.width, asset.height) {
+                    println!("  {w} x {h}");
+                }
+                if let Some(d) = asset.duration {
+                    println!("  duration {d:.1} s");
+                }
+                if let Some(p) = asset.pages {
+                    println!("  pages {p}");
+                }
+                for (k, v) in &asset.meta {
+                    println!("  {k} {v}");
+                }
+                if let Some(h) = &asset.hash {
+                    println!("  sha256 {h}");
+                }
+                if let Some(t) = &asset.thumbnail {
+                    println!("  thumbnail {t}");
+                }
+                if let Some(t) = &asset.text {
+                    println!("  text {t}");
+                }
+                for r in refs {
+                    println!("  referenced by {} ({})", r.from.title, r.from.path);
+                }
+            }
+        }
+        Cmd::Derive { limit } => {
+            let mut total = 0;
+            loop {
+                let batch = limit.map(|l| (l - total).min(50)).unwrap_or(50);
+                if batch == 0 {
+                    break;
+                }
+                let done = vault.derive_assets(batch)?;
+                if done.is_empty() {
+                    break;
+                }
+                for a in &done {
+                    if !cli.json {
+                        println!("{}", a.path);
+                    }
+                }
+                total += done.len();
+            }
+            if cli.json {
+                println!("{}", serde_json::json!({ "derived": total }));
+            } else {
+                println!("Derived {total} files");
+            }
+        }
+        Cmd::Tools => {
+            let t = graphite_core::tools();
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(t)?);
+            } else {
+                for (name, ok, what) in [
+                    ("ffmpeg", t.ffmpeg, "video and image thumbnails"),
+                    ("ffprobe", t.ffprobe, "video and audio metadata"),
+                    ("pdfinfo", t.pdfinfo, "PDF page count and title"),
+                    ("pdftotext", t.pdftotext, "PDF text for search"),
+                    ("pdftoppm", t.pdftoppm, "PDF thumbnails"),
+                    ("git", t.git, "GitHub importer"),
+                    ("yt-dlp", t.yt_dlp, "video importer"),
+                ] {
+                    println!("{:<10} {}  {}", name, if ok { "found  " } else { "missing" }, what);
                 }
             }
         }

@@ -5,12 +5,14 @@ use std::path::Path;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
+use crate::assets::{Asset, AssetHit, AssetKind, DerivedState};
 use crate::error::Result;
 use crate::links::{extract_links, normalise_target, LinkKind};
 use crate::note::{Note, NoteSummary};
 use crate::tasks::{parse_items, Item, ItemKind, ItemStatus};
+use std::collections::HashMap;
 
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -86,6 +88,32 @@ CREATE INDEX IF NOT EXISTS items_project ON items(project_norm);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
   id UNINDEXED, title, body, tags, tokenize = 'unicode61 remove_diacritics 2'
+);
+
+CREATE TABLE IF NOT EXISTS assets (
+  path      TEXT PRIMARY KEY,
+  name      TEXT NOT NULL,
+  ext       TEXT NOT NULL,
+  kind      TEXT NOT NULL,
+  size      INTEGER NOT NULL,
+  mtime_ms  INTEGER NOT NULL,
+  modified  TEXT NOT NULL,
+  hash      TEXT,
+  width     INTEGER,
+  height    INTEGER,
+  duration  REAL,
+  pages     INTEGER,
+  meta      TEXT NOT NULL,
+  text      TEXT,
+  thumbnail TEXT,
+  derived   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS assets_kind ON assets(kind);
+CREATE INDEX IF NOT EXISTS assets_derived ON assets(derived);
+CREATE INDEX IF NOT EXISTS assets_name ON assets(name COLLATE NOCASE);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS assets_fts USING fts5(
+  path UNINDEXED, name, body, tokenize = 'unicode61 remove_diacritics 2'
 );
 "#;
 
@@ -180,7 +208,7 @@ impl Index {
 
     pub fn clear(&self) -> Result<()> {
         self.conn.execute_batch(
-            "DELETE FROM items; DELETE FROM links; DELETE FROM properties; DELETE FROM aliases; DELETE FROM tags; DELETE FROM notes; DELETE FROM notes_fts;",
+            "DELETE FROM items; DELETE FROM links; DELETE FROM properties; DELETE FROM aliases; DELETE FROM tags; DELETE FROM notes; DELETE FROM notes_fts; DELETE FROM assets; DELETE FROM assets_fts;",
         )?;
         Ok(())
     }
@@ -247,13 +275,14 @@ impl Index {
             .execute(params![
                 note.id,
                 l.target,
-                normalise_target(&l.target),
+                match l.kind {
+                    // File links match by whole path; note links by title/stem.
+                    LinkKind::File => l.target.to_lowercase(),
+                    _ => normalise_target(&l.target),
+                },
                 l.heading,
                 l.relation,
-                match l.kind {
-                    LinkKind::Wiki => "wiki",
-                    LinkKind::Embed => "embed",
-                },
+                l.kind.as_str(),
                 l.position as i64
             ])?;
         }
@@ -450,7 +479,7 @@ impl Index {
 
         let placeholders = keys.iter().map(|_| "?").collect::<Vec<_>>().join(",");
         let sql = format!(
-            "SELECT from_id, relation, kind, position FROM links WHERE target_norm IN ({placeholders}) AND from_id != ? ORDER BY from_id, position"
+            "SELECT from_id, relation, kind, position FROM links WHERE kind != 'file' AND target_norm IN ({placeholders}) AND from_id != ? ORDER BY from_id, position"
         );
         let mut stmt = self.conn.prepare(&sql)?;
         let mut params_vec: Vec<&dyn rusqlite::ToSql> = keys.iter().map(|k| k as &dyn rusqlite::ToSql).collect();
@@ -470,11 +499,7 @@ impl Index {
                 out.push(Backlink {
                     from,
                     relation,
-                    kind: if kind == "embed" {
-                        LinkKind::Embed
-                    } else {
-                        LinkKind::Wiki
-                    },
+                    kind: LinkKind::parse(&kind),
                     position: position as usize,
                 });
             }
@@ -486,7 +511,7 @@ impl Index {
     pub fn outgoing(&self, id: &str) -> Result<Vec<(String, Option<String>)>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT DISTINCT target FROM links WHERE from_id = ?1 ORDER BY position")?;
+            .prepare("SELECT DISTINCT target FROM links WHERE from_id = ?1 AND kind != 'file' ORDER BY position")?;
         let targets: Vec<String> = stmt
             .query_map(params![id], |r| r.get(0))?
             .collect::<std::result::Result<_, _>>()?;
@@ -701,6 +726,221 @@ impl Index {
             });
         }
         Ok(out)
+    }
+
+    // ----- assets -----
+
+    /// Insert or replace an asset row. `text` is the extracted text to
+    /// make searchable (the vault reads the derived file before calling).
+    pub fn upsert_asset(&mut self, a: &Asset, text: Option<&str>) -> Result<()> {
+        let tx = self.conn.savepoint()?;
+        tx.prepare_cached("DELETE FROM assets_fts WHERE rowid IN (SELECT rowid FROM assets WHERE path = ?1)")?
+            .execute(params![a.path])?;
+        tx.prepare_cached("DELETE FROM assets WHERE path = ?1")?
+            .execute(params![a.path])?;
+        tx.prepare_cached(
+            "INSERT INTO assets(path, name, ext, kind, size, mtime_ms, modified, hash, width, height, duration, pages, meta, text, thumbnail, derived)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)",
+        )?
+        .execute(params![
+            a.path,
+            a.name,
+            a.ext,
+            a.kind.as_str(),
+            a.size,
+            a.modified.timestamp_millis(),
+            a.modified.to_rfc3339(),
+            a.hash,
+            a.width,
+            a.height,
+            a.duration,
+            a.pages,
+            serde_json::Value::Object(a.meta.clone()).to_string(),
+            a.text,
+            a.thumbnail,
+            match a.derived {
+                DerivedState::Pending => "pending",
+                DerivedState::Done => "done",
+            },
+        ])?;
+        let rowid = tx.last_insert_rowid();
+        let body = text.unwrap_or_default();
+        tx.prepare_cached("INSERT INTO assets_fts(rowid, path, name, body) VALUES (?1, ?2, ?3, ?4)")?
+            .execute(params![rowid, a.path, a.name.replace(['_', '-', '.'], " "), body])?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn remove_asset(&self, path: &str) -> Result<bool> {
+        self.conn.execute(
+            "DELETE FROM assets_fts WHERE rowid IN (SELECT rowid FROM assets WHERE path = ?1)",
+            params![path],
+        )?;
+        Ok(self.conn.execute("DELETE FROM assets WHERE path = ?1", params![path])? > 0)
+    }
+
+    /// `(mtime_ms, size)` recorded for an asset path, if indexed.
+    pub fn asset_stat(&self, path: &str) -> Result<Option<(i64, i64)>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT mtime_ms, size FROM assets WHERE path = ?1",
+                params![path],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?)
+    }
+
+    pub fn all_asset_paths(&self) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare("SELECT path FROM assets")?;
+        let rows = stmt.query_map([], |r| r.get(0))?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
+    const ASSET_COLS: &'static str =
+        "path, name, ext, kind, size, modified, hash, width, height, duration, pages, meta, text, thumbnail, derived";
+
+    fn row_asset(r: &rusqlite::Row<'_>) -> rusqlite::Result<Asset> {
+        let meta: String = r.get(11)?;
+        let derived: String = r.get(14)?;
+        let modified: String = r.get(5)?;
+        Ok(Asset {
+            path: r.get(0)?,
+            name: r.get(1)?,
+            ext: r.get(2)?,
+            kind: AssetKind::parse(&r.get::<_, String>(3)?),
+            size: r.get(4)?,
+            modified: chrono::DateTime::parse_from_rfc3339(&modified)
+                .map(|d| d.with_timezone(&chrono::Utc))
+                .unwrap_or_default(),
+            hash: r.get(6)?,
+            width: r.get(7)?,
+            height: r.get(8)?,
+            duration: r.get(9)?,
+            pages: r.get(10)?,
+            meta: serde_json::from_str::<serde_json::Value>(&meta)
+                .ok()
+                .and_then(|v| v.as_object().cloned())
+                .unwrap_or_default(),
+            text: r.get(12)?,
+            thumbnail: r.get(13)?,
+            derived: if derived == "done" {
+                DerivedState::Done
+            } else {
+                DerivedState::Pending
+            },
+        })
+    }
+
+    pub fn asset(&self, path: &str) -> Result<Option<Asset>> {
+        let sql = format!("SELECT {} FROM assets WHERE path = ?1", Self::ASSET_COLS);
+        Ok(self.conn.query_row(&sql, params![path], Self::row_asset).optional()?)
+    }
+
+    /// Assets newest first, optionally by kind and name/path substring.
+    pub fn assets(&self, kind: Option<AssetKind>, filter: Option<&str>) -> Result<Vec<Asset>> {
+        let mut sql = format!("SELECT {} FROM assets WHERE 1=1", Self::ASSET_COLS);
+        let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        if let Some(k) = kind {
+            sql.push_str(" AND kind = ?");
+            args.push(Box::new(k.as_str().to_string()));
+        }
+        if let Some(f) = filter.map(str::trim).filter(|f| !f.is_empty()) {
+            sql.push_str(" AND path LIKE ? ESCAPE '\\'");
+            let esc = f.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+            args.push(Box::new(format!("%{esc}%")));
+        }
+        sql.push_str(" ORDER BY mtime_ms DESC, path");
+        let mut stmt = self.conn.prepare(&sql)?;
+        let refs: Vec<&dyn rusqlite::ToSql> = args.iter().map(|a| a.as_ref()).collect();
+        let rows = stmt.query_map(refs.as_slice(), Self::row_asset)?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
+    pub fn pending_assets(&self, limit: usize) -> Result<Vec<Asset>> {
+        let sql = format!(
+            "SELECT {} FROM assets WHERE derived = 'pending' ORDER BY size ASC LIMIT ?1",
+            Self::ASSET_COLS
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(params![limit as i64], Self::row_asset)?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
+    pub fn asset_counts(&self) -> Result<HashMap<AssetKind, usize>> {
+        let mut stmt = self.conn.prepare("SELECT kind, COUNT(*) FROM assets GROUP BY kind")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+        let mut out = HashMap::new();
+        for row in rows {
+            let (k, n) = row?;
+            out.insert(AssetKind::parse(&k), n as usize);
+        }
+        Ok(out)
+    }
+
+    /// Notes linking to a file: `[text](path)`, `![alt](path)` or `![[name]]`.
+    pub fn asset_references(&self, path: &str) -> Result<Vec<Backlink>> {
+        let path_norm = path.trim().to_lowercase();
+        let name_norm = normalise_target(path);
+        let mut stmt = self.conn.prepare(
+            "SELECT from_id, relation, kind, position FROM links
+             WHERE (kind = 'file' AND target_norm = ?1) OR (kind = 'embed' AND target_norm = ?2)
+             ORDER BY from_id, position",
+        )?;
+        let rows = stmt.query_map(params![path_norm, name_norm], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, Option<String>>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, i64>(3)?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (from_id, relation, kind, position) = row?;
+            if let Some(from) = self.summary(&from_id)? {
+                out.push(Backlink {
+                    from,
+                    relation,
+                    kind: LinkKind::parse(&kind),
+                    position: position as usize,
+                });
+            }
+        }
+        Ok(out)
+    }
+
+    pub fn search_assets(&self, query: &str, limit: usize) -> Result<Vec<AssetHit>> {
+        let q = query.trim();
+        if q.is_empty() {
+            return Ok(Vec::new());
+        }
+        let fts: Vec<String> = q
+            .split_whitespace()
+            .map(|t| format!("\"{}\"*", t.replace('"', "\"\"")))
+            .collect();
+        let fts = fts.join(" ");
+        let mut stmt = self.conn.prepare(
+            "SELECT a.path, a.name, a.kind, snippet(assets_fts, 2, '[', ']', '…', 12)
+             FROM assets_fts JOIN assets a ON a.path = assets_fts.path
+             WHERE assets_fts MATCH ?1
+             ORDER BY bm25(assets_fts, 0.0, 5.0, 1.0) LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![fts, limit as i64], |r| {
+            Ok(AssetHit {
+                path: r.get(0)?,
+                name: r.get(1)?,
+                kind: AssetKind::parse(&r.get::<_, String>(2)?),
+                snippet: r.get(3)?,
+            })
+        })?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
+    pub fn asset_count(&self) -> Result<usize> {
+        Ok(self
+            .conn
+            .query_row("SELECT COUNT(*) FROM assets", [], |r| r.get::<_, i64>(0))? as usize)
     }
 
     pub fn count(&self) -> Result<usize> {

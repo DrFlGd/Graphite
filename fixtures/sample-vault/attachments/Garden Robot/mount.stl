@@ -1,0 +1,16 @@
+solid mount
+facet normal 0 0 1
+outer loop
+vertex 0 0 0
+vertex 40 0 0
+vertex 0 25 0
+endloop
+endfacet
+facet normal 0 0 1
+outer loop
+vertex 40 0 0
+vertex 40 25 12
+vertex 0 25 0
+endloop
+endfacet
+endsolid mount

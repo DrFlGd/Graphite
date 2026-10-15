@@ -24,6 +24,8 @@ notify = "8"
 notify-debouncer-mini = "0.7"
 tracing = "0.1"
 tempfile = "3"
+sha2 = "0.10"
+imagesize = "0.15"
 
 [profile.release]
 strip = true

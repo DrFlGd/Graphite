@@ -8,6 +8,7 @@ export interface VaultInfo {
   root: string
   name: string
   note_count: number
+  asset_count: number
 }
 
 export interface NoteSummary {
@@ -36,8 +37,50 @@ export interface SearchHit {
 export interface Backlink {
   from: NoteSummary
   relation: string | null
-  kind: 'wiki' | 'embed'
+  kind: 'wiki' | 'embed' | 'file'
   position: number
+}
+
+export type AssetKind = 'image' | 'vector' | 'video' | 'audio' | 'pdf' | 'model' | 'code' | 'data' | 'document' | 'archive' | 'other'
+export const ASSET_KINDS: AssetKind[] = ['image', 'vector', 'video', 'audio', 'pdf', 'model', 'code', 'data', 'document', 'archive', 'other']
+
+/** A file in the vault as the index knows it (see core `assets.rs`). */
+export interface Asset {
+  /** Vault-relative path; the asset's identity. */
+  path: string
+  name: string
+  ext: string
+  kind: AssetKind
+  size: number
+  modified: string
+  hash: string | null
+  width: number | null
+  height: number | null
+  duration: number | null
+  pages: number | null
+  meta: Record<string, unknown>
+  /** Vault-relative path of extracted text under .graphite/derived. */
+  text: string | null
+  /** Vault-relative path of a JPEG thumbnail under .graphite/derived. */
+  thumbnail: string | null
+  derived: 'pending' | 'done'
+}
+
+export interface AssetHit {
+  path: string
+  name: string
+  kind: AssetKind
+  snippet: string
+}
+
+export interface Tools {
+  ffmpeg: boolean
+  ffprobe: boolean
+  pdfinfo: boolean
+  pdftotext: boolean
+  pdftoppm: boolean
+  git: boolean
+  yt_dlp: boolean
 }
 
 export interface Outgoing {
@@ -192,6 +235,20 @@ export const api = {
   projectHub: (id: string) => invoke<ProjectHub>('project_hub', { id }),
   completeTitle: (prefix: string) => invoke<NoteSummary[]>('complete_title', { prefix }),
   rebuildIndex: () => invoke<number>('rebuild_index'),
+  assets: (kind?: AssetKind, filter?: string) => invoke<Asset[]>('assets', { kind, filter }),
+  asset: (path: string) => invoke<Asset>('asset', { path }),
+  assetReferences: (path: string) => invoke<Backlink[]>('asset_references', { path }),
+  assetText: (path: string) => invoke<string | null>('asset_text', { path }),
+  assetCounts: () => invoke<Record<string, number>>('asset_counts'),
+  searchAssets: (query: string, limit = 20) => invoke<AssetHit[]>('search_assets', { query, limit }),
+  /** Absolute path on disk, for opening in another app or revealing in the file manager. */
+  assetPath: (path: string) => invoke<string>('asset_path', { path }),
+  deriveAsset: (path: string) => invoke<Asset>('derive_asset', { path }),
+  deriveAssets: () => invoke<void>('derive_assets'),
+  tools: () => invoke<Tools>('tools'),
+  /** Fires as previews and text are derived in the background; `pending` false when the queue is empty. */
+  onAssetsDerived: (cb: (paths: string[], pending: boolean) => void): Promise<UnlistenFn> =>
+    listen<{ paths: string[]; pending: boolean }>('assets://derived', (e) => cb(e.payload.paths, e.payload.pending)),
   attachFile: (src: string, folder?: string) => invoke<string>('attach_file', { src, folder }),
   attachData: (name: string, dataBase64: string, folder?: string) => invoke<string>('attach_data', { name, dataBase64, folder }),
   capture: (text: string, attachments: string[]) => invoke<Note>('capture', { text, attachments }),
@@ -206,9 +263,9 @@ export const api = {
   onCaptureShown: (cb: () => void): Promise<UnlistenFn> => listen('capture://shown', () => cb()),
   /** Another window asked the main window to open a note. */
   onOpenNote: (cb: (id: string) => void): Promise<UnlistenFn> => listen<string>('note://open', (e) => cb(e.payload)),
-  /** Subscribe to notes changed on disk by something other than this app. */
-  onVaultChanged: (cb: (ids: string[]) => void): Promise<UnlistenFn> =>
-    listen<{ ids: string[] }>('vault://changed', (e) => cb(e.payload.ids)),
+  /** Subscribe to notes (ids) and files (vault-relative paths) changed on disk by something other than this app. */
+  onVaultChanged: (cb: (ids: string[], assets: string[]) => void): Promise<UnlistenFn> =>
+    listen<{ ids: string[]; assets?: string[] }>('vault://changed', (e) => cb(e.payload.ids, e.payload.assets ?? [])),
 }
 
 /** Read a File (clipboard or drop) as base64 for `attachData`. */

@@ -151,6 +151,10 @@ impl Index {
         })?;
         for row in rows {
             let (from, target, norm, relation, kind) = row?;
+            // File links and asset embeds point at files, not notes: not graph edges (yet).
+            if kind == "file" || (kind == "embed" && looks_like_file(&target)) {
+                continue;
+            }
             let to = match resolve(&target, &norm) {
                 Some(id) => id,
                 None => {
@@ -162,11 +166,7 @@ impl Index {
             if to == from {
                 continue;
             }
-            let kind = if kind == "embed" {
-                LinkKind::Embed
-            } else {
-                LinkKind::Wiki
-            };
+            let kind = LinkKind::parse(&kind);
             match edge_at.get(&(from.clone(), to.clone())) {
                 Some(&i) => {
                     edges[i].count += 1;
@@ -221,6 +221,15 @@ impl Vault {
     pub fn missing_target(id: &str) -> Option<&str> {
         id.strip_prefix("missing:")
     }
+}
+
+/// `![[photo.png]]`-style targets name a file when they end in a known
+/// asset extension.
+fn looks_like_file(target: &str) -> bool {
+    target
+        .rsplit_once('.')
+        .map(|(_, ext)| crate::assets::is_asset_ext(ext))
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
