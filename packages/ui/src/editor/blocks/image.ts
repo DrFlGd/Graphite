@@ -1,6 +1,7 @@
 import { Image as ImageIcon } from 'lucide-react'
 import Image, { type ImageOptions as BaseImageOptions } from '@tiptap/extension-image'
 import type { BlockDef } from './types'
+import { encodeSrc, isImageSrc } from '../attachments'
 
 export interface ImageOptions extends BaseImageOptions {
   /** Map a Markdown src (usually a vault-relative path) to something the webview can load. */
@@ -14,6 +15,14 @@ export interface ImageOptions extends BaseImageOptions {
 export const VaultImage = Image.extend<ImageOptions>({
   addOptions() {
     return { ...(this.parent?.() as BaseImageOptions), resolveSrc: (s: string) => s }
+  },
+  // `![name](file.mp4)` is a file embed, not a broken image (see `fileEmbed.tsx`).
+  parseMarkdown: (token, helpers) => {
+    const src = String(token.href ?? '')
+    if (!isImageSrc(src) && !/^(https?:|data:|blob:)/i.test(src)) {
+      return helpers.createNode('fileEmbed', { src, name: String(token.text ?? '') })
+    }
+    return helpers.createNode('image', { src, title: token.title, alt: token.text })
   },
   renderHTML({ HTMLAttributes }) {
     const src = typeof HTMLAttributes.src === 'string' ? HTMLAttributes.src : ''
@@ -41,6 +50,6 @@ export const image: BlockDef = {
   keywords: ['picture', 'photo', 'png', 'jpg', 'figure'],
   insert: async (editor, ctx) => {
     const src = ctx.pickImage ? await ctx.pickImage() : null
-    if (src) editor.chain().focus().setImage({ src }).run()
+    if (src) editor.chain().focus().setImage({ src: encodeSrc(src) }).run()
   },
 }

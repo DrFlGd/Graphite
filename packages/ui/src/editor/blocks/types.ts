@@ -32,4 +32,6 @@ export interface BlockDef {
 export interface BlockContext {
   /** Ask the host for an image; resolves to a src usable in Markdown (relative path or URL), or null. */
   pickImage?: () => Promise<string | null>
+  /** Ask the host for any file; resolves to its Markdown src and display name, or null. */
+  pickFile?: () => Promise<{ src: string; name: string } | null>
 }

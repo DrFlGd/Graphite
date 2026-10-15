@@ -15,6 +15,6 @@ TRACK_WIDTH_MM = 180
 
 ## Files
 
-![wiring](attachments/Garden Robot/wiring.svg)
+![wiring](attachments/Garden%20Robot/wiring.svg)
 
-Motor bench results: [motor-tests.csv](attachments/Garden Robot/motor-tests.csv). Printable bracket: ![[mount.stl]]
+Motor bench results: [motor-tests.csv](attachments/Garden%20Robot/motor-tests.csv). Printable bracket: ![[mount.stl]]

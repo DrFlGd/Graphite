@@ -15,6 +15,10 @@ export interface NoteEditorProps {
   docKey: string
   onChange: (markdown: string) => void
   onFollowLink?: (target: string, heading: string | null) => void
+  /** A file embed or a relative `[text](path)` link was clicked. */
+  onOpenFile?: (src: string) => void
+  /** An external `[text](https://…)` link was clicked. */
+  onOpenUrl?: (href: string) => void
   searchNotes?: (query: string) => Promise<NoteCandidate[]>
   resolveSrc?: (src: string) => string
   blockContext?: BlockContext
@@ -39,11 +43,11 @@ export interface NoteEditorProps {
  * out (ADR-005).
  */
 export function NoteEditor(props: NoteEditorProps) {
-  const { markdown, docKey, onChange, onFollowLink, searchNotes, resolveSrc, blockContext, placeholder, editable = true, toolbarTrailing, autofocus, onReady, onFiles } = props
+  const { markdown, docKey, onChange, onFollowLink, onOpenFile, onOpenUrl, searchNotes, resolveSrc, blockContext, placeholder, editable = true, toolbarTrailing, autofocus, onReady, onFiles } = props
   const lastEmitted = useRef<string>(markdown)
   const context = useMemo<BlockContext>(() => blockContext ?? {}, [blockContext])
-  const callbacks = useRef({ onChange, onFollowLink, searchNotes, onReady, onFiles })
-  callbacks.current = { onChange, onFollowLink, searchNotes, onReady, onFiles }
+  const callbacks = useRef({ onChange, onFollowLink, onOpenFile, onOpenUrl, searchNotes, onReady, onFiles })
+  callbacks.current = { onChange, onFollowLink, onOpenFile, onOpenUrl, searchNotes, onReady, onFiles }
 
   const extensions = useMemo(
     () =>
@@ -72,7 +76,22 @@ export function NoteEditor(props: NoteEditorProps) {
             callbacks.current.onFollowLink?.(node.attrs.target as string, (node.attrs.heading as string | null) ?? null)
             return true
           }
+          if (node.type.name === 'fileEmbed' && (event.target as HTMLElement | null)?.closest?.('[data-file-open]')) {
+            callbacks.current.onOpenFile?.(node.attrs.src as string)
+            return true
+          }
           return false
+        },
+        handleClick: (_view, _pos, event) => {
+          // Plain Markdown links: a relative path opens the file, a URL leaves the app.
+          const a = (event.target as HTMLElement | null)?.closest?.('a[href]') as HTMLAnchorElement | null
+          if (!a || event.shiftKey) return false
+          const href = a.getAttribute('href') ?? ''
+          if (!href || href.startsWith('#')) return false
+          event.preventDefault()
+          if (/^[a-z][a-z0-9+.-]*:/i.test(href)) callbacks.current.onOpenUrl?.(href)
+          else callbacks.current.onOpenFile?.(href.replace(/^\.\//, ''))
+          return true
         },
         handleKeyDown: (view, event) => {
           // Enter on a selected link chip follows it.

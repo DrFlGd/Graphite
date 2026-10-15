@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
+import { openUrl } from '@tauri-apps/plugin-opener'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
-import { ArrowUpRight, CalendarDays, Columns2, FilePlus2, FolderOpen, Inbox, LayoutTemplate, ListChecks, Locate, RefreshCw, Search, SquareKanban, Trash2, Waypoints, X, Zap } from 'lucide-react'
+import { ArrowUpRight, CalendarDays, Columns2, FilePlus2, FolderOpen, Inbox, LayoutTemplate, ListChecks, Locate, Paperclip, RefreshCw, Search, SquareKanban, Trash2, Waypoints, X, Zap } from 'lucide-react'
 import { insertAttachments, type AttachmentItem, type Editor } from '@graphite/ui'
-import { api, assetUrl, INBOX_DIR, type Note, type NoteSummary, type VaultInfo } from './api'
+import { api, assetUrl, decodePath, INBOX_DIR, type Note, type NoteSummary, type VaultInfo } from './api'
 import { Sidebar } from './components/Sidebar'
 import { NoteTab } from './components/NoteTab'
 import { Pane } from './components/Pane'
@@ -14,6 +15,8 @@ import { ProjectHub } from './components/ProjectHub'
 import { TemplatePicker } from './components/TemplatePicker'
 import type { ViewKind } from './components/QueryView'
 import { ContextPanel } from './components/ContextPanel'
+import { AssetView } from './components/AssetView'
+import { FilesView } from './components/FilesView'
 import { GraphView, type GraphMode } from './components/GraphView'
 import { Palette, type Command, type PaletteMode } from './components/Palette'
 import { Welcome } from './components/Welcome'
@@ -35,6 +38,8 @@ export function App() {
   const [error, setError] = useState<string | null>(null)
   /** Bumped when notes change so views that derive from the index refetch. */
   const [version, setVersion] = useState(0)
+  /** Bumped when files or their previews change on disk. */
+  const [assetVersion, setAssetVersion] = useState(0)
   const [changed, setChanged] = useState<{ ids: string[]; seq: number }>({ ids: [], seq: 0 })
   const [saved, setSaved] = useState<Note | null>(null)
   /** Open tasks across the vault, for the sidebar badge. */
@@ -124,6 +129,16 @@ export function App() {
   }, [])
 
   const openInbox = useCallback((newTab = false) => setLayout((l) => L.open(l, { kind: 'inbox' }, newTab)), [])
+  const openFiles = useCallback((newTab = false) => setLayout((l) => L.open(l, { kind: 'files' }, newTab)), [])
+  /** Show a file's own view; `path` may carry `#page=N` from a PDF link. */
+  const openAsset = useCallback((src: string, newTab = false) => {
+    const [path, hash] = src.split('#')
+    const page = hash ? Number(/page=(\d+)/.exec(hash)?.[1]) || undefined : undefined
+    setLayout((l) => L.open(l, { kind: 'asset', path: decodePath(path.replace(/^\.\//, '')), page }, newTab))
+  }, [])
+  const openExternal = useCallback((href: string) => {
+    openUrl(href).catch((e) => setError(String(e)))
+  }, [])
   const openTasksView = useCallback((newTab = false) => setLayout((l) => L.open(l, { kind: 'tasks' }, newTab)), [])
 
   // Keep the open-task count fresh whenever the index changes.
@@ -231,7 +246,9 @@ export function App() {
     if (!vault) return
     let unlisten: (() => void) | undefined
     void api
-      .onVaultChanged((ids) => {
+      .onVaultChanged((ids, assets) => {
+        if (assets.length > 0) setAssetVersion((v) => v + 1)
+        if (ids.length === 0 && assets.length > 0) return
         setChanged((c) => ({ ids, seq: c.seq + 1 }))
         void refreshList().then((list) => {
           if (!list) return
@@ -244,6 +261,21 @@ export function App() {
       })
     return () => unlisten?.()
   }, [vault, refreshList])
+
+  // Previews and extracted text arrive in the background after files change.
+  useEffect(() => {
+    if (!vault) return
+    let unlisten: (() => void) | undefined
+    void api
+      .onAssetsDerived((paths, pending) => {
+        if (paths.length > 0 || !pending) setAssetVersion((v) => v + 1)
+        if (!pending) void api.vaultInfo().then((info) => info && setVault(info)).catch(() => {})
+      })
+      .then((u) => {
+        unlisten = u
+      })
+    return () => unlisten?.()
+  }, [vault])
 
   // The capture window asked us to show a note it just saved.
   useEffect(() => {
@@ -276,6 +308,8 @@ export function App() {
         const scale = window.devicePixelRatio || 1
         const pos = editor.view.posAtCoords({ left: e.payload.position.x / scale, top: e.payload.position.y / scale })?.pos
         insertAttachments(editor, items, pos)
+        void api.deriveAssets()
+        setAssetVersion((v) => v + 1)
       })
       .then((u) => {
         unlisten = u
@@ -299,6 +333,20 @@ export function App() {
     }
   }, [])
 
+  const pickFile = useCallback(async () => {
+    const file = await openDialog({ multiple: false, directory: false, title: 'Attach a file' })
+    if (typeof file !== 'string') return null
+    try {
+      const src = await api.attachFile(file)
+      void api.deriveAssets()
+      setAssetVersion((v) => v + 1)
+      return { src, name: file.split(/[\\/]/).pop() ?? src }
+    } catch (e) {
+      setError(String(e))
+      return null
+    }
+  }, [])
+
   const resolveSrc = useMemo(() => (vault ? (src: string) => assetUrl(vault.root, src) : undefined), [vault])
 
   // Keyboard shortcuts for the whole window.
@@ -315,6 +363,7 @@ export function App() {
         if (key === 'p') act(() => setPalette({ mode: 'commands', newTab: false }))
         else if (key === 'g') act(() => showGraph(lastNote && active.kind !== 'graph' ? 'local' : 'global'))
         else if (key === 't') act(() => openTasksView())
+        else if (key === 'f') act(() => openFiles())
         else if (key === 'n') act(() => setPicker({ kind: 'create' }))
         else if (key === 'tab') act(() => setLayout((l) => L.cycleTab(l, -1)))
         return
@@ -330,7 +379,7 @@ export function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [createNote, openToday, showGraph, openTasksView, lastNote, active.kind])
+  }, [createNote, openToday, showGraph, openTasksView, openFiles, lastNote, active.kind])
 
   const commands = useMemo<Command[]>(
     () => [
@@ -342,6 +391,8 @@ export function App() {
       { id: 'today', label: "Open today's daily note", shortcut: 'Ctrl+D', icon: <CalendarDays size={16} />, keywords: 'daily journal', run: () => void openToday() },
       { id: 'inbox', label: 'Show inbox', icon: <Inbox size={16} />, keywords: 'triage captures', run: () => openInbox() },
       { id: 'tasks', label: 'Show tasks', shortcut: 'Ctrl+Shift+T', icon: <ListChecks size={16} />, keywords: 'todo tracker gaps questions board', run: () => openTasksView() },
+      { id: 'files', label: 'Show files', shortcut: 'Ctrl+Shift+F', icon: <Paperclip size={16} />, keywords: 'attachments images video pdf models gallery assets', run: () => openFiles() },
+      ...(activeNote ? [{ id: 'attach', label: 'Attach a file to this note…', icon: <Paperclip size={16} />, keywords: 'upload insert embed', run: () => void pickFile().then((f) => f && activeEditor.current && insertAttachments(activeEditor.current, [f])) }] : []),
       { id: 'query', label: 'New saved query', icon: <SquareKanban size={16} />, keywords: 'view list table board filter', run: () => void saveQuery('type:task status:open sort:due', 'list') },
       { id: 'graph', label: 'Show graph of the whole vault', shortcut: 'Ctrl+Shift+G', icon: <Waypoints size={16} />, keywords: 'links network', run: () => showGraph('global') },
       ...(lastNote ? [{ id: 'graph-local', label: `Show graph around “${lastNote.title}”`, icon: <Locate size={16} />, keywords: 'local links', run: () => showGraph('local') }] : []),
@@ -353,7 +404,7 @@ export function App() {
       { id: 'vault', label: 'Open another vault folder', icon: <FolderOpen size={16} />, keywords: 'switch', run: () => void pickVault() },
       { id: 'reindex', label: 'Rebuild the search index', icon: <RefreshCw size={16} />, keywords: 'reindex repair', run: () => void api.rebuildIndex().then(refreshList).catch((e) => setError(String(e))) },
     ],
-    [createNote, openToday, openInbox, openTasksView, saveQuery, showAsView, showGraph, lastNote, activeNote, deleteNote, pickVault, refreshList],
+    [createNote, openToday, openInbox, openTasksView, openFiles, pickFile, saveQuery, showAsView, showGraph, lastNote, activeNote, deleteNote, pickVault, refreshList],
   )
 
   if (!vault) return <Welcome onPick={pickVault} error={error} />
@@ -369,7 +420,21 @@ export function App() {
           return <SavedQueryTab key={tab.id} noteId={tab.noteId} version={version} onOpen={openNote} onChanged={() => void refreshList()} onError={setError} onEdit={() => editAsNote(tab.noteId)} />
         }
         if (type === 'project' && !editingNotes.has(tab.noteId)) {
-          return <ProjectHub key={tab.id} noteId={tab.noteId} version={version} onOpen={openNote} onChanged={() => void refreshList()} onError={setError} onEdit={() => editAsNote(tab.noteId)} />
+          return (
+            <ProjectHub
+              key={tab.id}
+              noteId={tab.noteId}
+              version={version}
+              vaultRoot={vault.root}
+              assetVersion={assetVersion}
+              onOpenFile={openAsset}
+              onFilesChanged={() => setAssetVersion((v) => v + 1)}
+              onOpen={openNote}
+              onChanged={() => void refreshList()}
+              onError={setError}
+              onEdit={() => editAsNote(tab.noteId)}
+            />
+          )
         }
         return (
           <NoteTab
@@ -391,10 +456,13 @@ export function App() {
               void refreshList()
             }}
             onFollowLink={(t) => void followLink(t)}
+            onOpenFile={(src) => openAsset(src)}
+            onOpenUrl={openExternal}
             onDelete={(n) => void deleteNote(n)}
             onError={setError}
             resolveSrc={resolveSrc}
             pickImage={pickImage}
+            pickFile={pickFile}
           />
         )
       }
@@ -402,6 +470,10 @@ export function App() {
         return <InboxView key={tab.id} notes={notes} onOpen={(id) => openNote(id)} onChanged={() => void refreshList()} onError={setError} />
       case 'tasks':
         return <TasksView key={tab.id} notes={notes} version={version} onOpen={openNote} onChanged={() => void refreshList()} onError={setError} onSaveQuery={(q, v) => void saveQuery(q, v)} />
+      case 'files':
+        return <FilesView key={tab.id} vaultRoot={vault.root} version={assetVersion} onOpen={openAsset} onChanged={() => setAssetVersion((v) => v + 1)} onError={setError} />
+      case 'asset':
+        return <AssetView key={tab.id} path={tab.path} page={tab.page} vaultRoot={vault.root} version={assetVersion} onOpenNote={openNote} onNoteCreated={(id) => void refreshList().then(() => openNote(id))} onError={setError} />
       case 'graph':
         return <GraphView key={tab.id} current={lastNote} mode={graphMode} onModeChange={setGraphMode} version={version} onOpen={(id) => openNote(id)} onCreate={(t) => void followLink(t)} onError={setError} />
       default:
@@ -432,11 +504,13 @@ export function App() {
         inboxOpen={active.kind === 'inbox'}
         graphOpen={active.kind === 'graph'}
         tasksOpen={active.kind === 'tasks'}
+        filesOpen={active.kind === 'files' || active.kind === 'asset'}
         openTasks={openTasks}
         onInbox={() => openInbox()}
         onToday={() => void openToday()}
         onGraph={() => showGraph(graphMode)}
         onTasks={() => openTasksView()}
+        onFiles={() => openFiles()}
       />
       <main className="panes">
         {layout.panes.map((pane, pi) => {
@@ -486,6 +560,7 @@ export function App() {
           commands={commands}
           onClose={() => setPalette(null)}
           onOpen={(id, newTab) => openNote(id, newTab || palette.newTab)}
+          onOpenFile={(path, newTab) => openAsset(path, newTab || palette.newTab)}
           onCreate={(t) => void createNote(t)}
         />
       )}

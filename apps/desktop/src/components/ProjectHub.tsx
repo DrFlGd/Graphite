@@ -2,10 +2,16 @@ import { useCallback, useEffect, useState } from 'react'
 import { FilePlus2, SquarePen } from 'lucide-react'
 import { api, type ItemRow, type ProjectHub as Hub } from '../api'
 import { QueryView, type ViewKind } from './QueryView'
+import { FilesView } from './FilesView'
 
 interface Props {
   noteId: string
   version: number
+  vaultRoot: string
+  /** Bumped when files change. */
+  assetVersion: number
+  onOpenFile: (path: string, newTab?: boolean) => void
+  onFilesChanged: () => void
   onOpen: (id: string, newTab?: boolean) => void
   onChanged: () => void
   onError: (e: string) => void
@@ -18,7 +24,7 @@ interface Props {
  * open questions, decisions, sources and linked notes, all gathered from
  * the index. The note's own text is one click away.
  */
-export function ProjectHub({ noteId, version, onOpen, onChanged, onError, onEdit }: Props) {
+export function ProjectHub({ noteId, version, vaultRoot, assetVersion, onOpenFile, onFilesChanged, onOpen, onChanged, onError, onEdit }: Props) {
   const [hub, setHub] = useState<Hub | null>(null)
   const [query, setQuery] = useState<string | null>(null)
   const [view, setView] = useState<ViewKind>('tree')
@@ -146,6 +152,14 @@ export function ProjectHub({ noteId, version, onOpen, onChanged, onError, onEdit
               <span>{s.title}</span>
             </button>
           ))}
+        </section>
+
+        <section className="hub__section hub__section--files">
+          <h3>Files</h3>
+          <p className="hub__hint">
+            The project's own folder, <code>attachments/{hub.project.title}/</code>. Files anywhere else can still be linked from its notes.
+          </p>
+          <FilesView vaultRoot={vaultRoot} version={assetVersion} folder={`attachments/${hub.project.title}`} compact onOpen={onOpenFile} onChanged={onFilesChanged} onError={onError} />
         </section>
 
         <section className="hub__section">

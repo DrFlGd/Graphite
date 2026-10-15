@@ -65,6 +65,19 @@ describe('layout', () => {
     expect(l.active).toBe(0)
   })
 
+  it('keeps one tab per file and updates its page in place', () => {
+    let l = open(emptyLayout(), { kind: 'asset', path: 'attachments/a.pdf' })
+    l = open(l, { kind: 'asset', path: 'attachments/b.pdf' }, true)
+    l = open(l, { kind: 'asset', path: 'attachments/a.pdf', page: 3 }, true)
+    expect(l.panes[0].tabs).toHaveLength(2)
+    expect(l.panes[0].active).toBe(0)
+    expect(l.panes[0].tabs[0]).toMatchObject({ kind: 'asset', path: 'attachments/a.pdf', page: 3 })
+    l = open(l, { kind: 'files' }, true)
+    l = open(l, { kind: 'files' }, true)
+    expect(l.panes[0].tabs).toHaveLength(3)
+    expect(parseLayout(JSON.parse(JSON.stringify(l)))?.panes[0].tabs).toHaveLength(3)
+  })
+
   it('drops tabs of deleted notes and finds where a note is open', () => {
     let l = open(open(emptyLayout(), note('a')), note('b'), true)
     l = splitRight(l)

@@ -243,6 +243,10 @@ export const api = {
   searchAssets: (query: string, limit = 20) => invoke<AssetHit[]>('search_assets', { query, limit }),
   /** Absolute path on disk, for opening in another app or revealing in the file manager. */
   assetPath: (path: string) => invoke<string>('asset_path', { path }),
+  /** Vault-relative path of a rendered PDF page image (1-based); needs poppler. */
+  assetPage: (path: string, page: number) => invoke<string>('asset_page', { path, page }),
+  openAsset: (path: string) => invoke<void>('open_asset', { path }),
+  revealAsset: (path: string) => invoke<void>('reveal_asset', { path }),
   deriveAsset: (path: string) => invoke<Asset>('derive_asset', { path }),
   deriveAssets: () => invoke<void>('derive_assets'),
   tools: () => invoke<Tools>('tools'),
@@ -282,10 +286,19 @@ export const INBOX_DIR = 'notes/Inbox'
 export const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'avif']
 export const isImagePath = (p: string) => IMAGE_EXTS.includes(p.split('.').pop()?.toLowerCase() ?? '')
 
+/** Undo the percent-encoding Markdown links need for spaces and parentheses. */
+export function decodePath(src: string): string {
+  try {
+    return decodeURIComponent(src)
+  } catch {
+    return src
+  }
+}
+
 /** Turn a vault-relative src into a URL the webview may load. */
 export function assetUrl(vaultRoot: string, src: string): string {
   if (/^(https?:|data:|blob:|asset:)/i.test(src)) return src
   const sep = vaultRoot.includes('\\') ? '\\' : '/'
-  const rel = src.replace(/^\.?\//, '').split('/').join(sep)
+  const rel = decodePath(src.split(/[?#]/)[0]).replace(/^\.?\//, '').split('/').join(sep)
   return convertFileSrc(`${vaultRoot}${sep}${rel}`)
 }
