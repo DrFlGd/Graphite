@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { ago, syncSummary } from './sync'
 
-const status = (enabled: boolean, others: number) => ({
+const status = (enabled: boolean, others: number, relay = false) => ({
   enabled,
+  relay: relay ? { url: 'https://r.example', last: null, files: 2, kept_local: [] } : null,
   device: { id: 'a', name: 'laptop' },
   devices: [{ id: 'a', name: 'laptop', last_sync: null, notes: 1, this_device: true }].concat(
     Array.from({ length: others }, (_, i) => ({ id: `d${i}`, name: `dev${i}`, last_sync: null, notes: 1, this_device: false })),
@@ -17,6 +18,8 @@ describe('syncSummary', () => {
     expect(syncSummary(status(true, 0))).toBe('Sync on')
     expect(syncSummary(status(true, 1))).toBe('1 other device')
     expect(syncSummary(status(true, 3))).toBe('3 other devices')
+    expect(syncSummary(status(true, 0, true))).toBe('Sync on via relay')
+    expect(syncSummary(status(true, 2, true))).toBe('2 other devices via relay')
   })
 })
 

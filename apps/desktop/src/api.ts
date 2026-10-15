@@ -243,11 +243,26 @@ export interface SyncDevice {
   this_device: boolean
 }
 
+/** The relay this device syncs through, when connected to one. */
+export interface RelayStatus {
+  url: string
+  last: string | null
+  files: number
+  /** Assets over the large-file limit, kept on this device only. */
+  kept_local: string[]
+}
+
 export interface SyncStatus {
   enabled: boolean
   device: { id: string; name: string }
   devices: SyncDevice[]
   last_sync: string | null
+  relay: RelayStatus | null
+}
+
+/** `.graphite/config.json`: this vault's settings on this device. */
+export interface VaultConfig {
+  large_file_mb: number
 }
 
 /** One saved version of a note (`.graphite/history/`). */
@@ -346,6 +361,13 @@ export const api = {
   /** Merge with the other devices now; turns sync on for the vault the first time. */
   syncNow: () => invoke<SyncReport>('sync_now'),
   syncStatus: () => invoke<SyncStatus>('sync_status'),
+  /** Make a key for a relay and connect; returns the invite for other devices. */
+  relayCreate: (url: string) => invoke<string>('relay_create', { url }),
+  relayConnect: (invite: string) => invoke<SyncStatus>('relay_connect', { invite }),
+  relayInvite: () => invoke<string | null>('relay_invite'),
+  relayDisconnect: () => invoke<SyncStatus>('relay_disconnect'),
+  getConfig: () => invoke<VaultConfig>('get_config'),
+  setConfig: (config: VaultConfig) => invoke<VaultConfig>('set_config', { config }),
   versions: (id: string) => invoke<Version[]>('versions', { id }),
   versionNote: (id: string, version: string) => invoke<Note>('version_note', { id, version }),
   restoreVersion: (id: string, version: string) => invoke<Note>('restore_version', { id, version }),

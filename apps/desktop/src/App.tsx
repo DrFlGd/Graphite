@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
-import { Archive, ArrowUpRight, CalendarDays, Columns2, Download, FilePlus2, FolderOpen, Inbox, LayoutTemplate, ListChecks, Locate, Paperclip, RefreshCw, Search, SquareKanban, Trash2, Waypoints, X, Zap } from 'lucide-react'
+import { Archive, ArrowUpRight, Settings2, CalendarDays, Columns2, Download, FilePlus2, FolderOpen, Inbox, LayoutTemplate, ListChecks, Locate, Paperclip, RefreshCw, Search, SquareKanban, Trash2, Waypoints, X, Zap } from 'lucide-react'
 import { insertAttachments, type AttachmentItem, type Editor } from '@graphite/ui'
 import { api, assetUrl, decodePath, INBOX_DIR, type Note, type NoteSummary, type SyncStatus, type VaultInfo } from './api'
 import { Sidebar } from './components/Sidebar'
@@ -19,6 +19,7 @@ import { AssetView } from './components/AssetView'
 import { FilesView } from './components/FilesView'
 import { SourcesView } from './components/SourcesView'
 import { ImportDialog, type ImportRequest } from './components/ImportDialog'
+import { SyncDialog } from './components/SyncDialog'
 import { GraphView, type GraphMode } from './components/GraphView'
 import { Palette, type Command, type PaletteMode } from './components/Palette'
 import { Welcome } from './components/Welcome'
@@ -53,6 +54,7 @@ export function App() {
   const [picker, setPicker] = useState<{ kind: 'create' } | { kind: 'promote'; noteId: string; title: string } | null>(null)
   /** The import dialog, when open. */
   const [importing, setImporting] = useState<ImportRequest | null>(null)
+  const [syncOpen, setSyncOpen] = useState(false)
   /** Sources flagged as changed upstream, for the sidebar badge. */
   const [sourceUpdates, setSourceUpdates] = useState(0)
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null)
@@ -487,6 +489,7 @@ export function App() {
       { id: 'import', label: 'Import from URL…', shortcut: 'Ctrl+Shift+I', icon: <Download size={16} />, keywords: 'github repo clone web page article youtube video pdf source fetch', run: () => setImporting({}) },
       { id: 'sources', label: 'Show sources', icon: <Download size={16} />, keywords: 'imports repos pages videos updates', run: () => openSources() },
       { id: 'sync', label: syncStatus?.enabled ? 'Sync now' : 'Turn on sync', icon: <RefreshCw size={16} />, keywords: 'devices merge shared folder', run: () => void syncNow() },
+      { id: 'sync-settings', label: 'Sync settings', icon: <Settings2 size={16} />, keywords: 'relay devices invite large files', run: () => setSyncOpen(true) },
       { id: 'snapshot', label: 'Take a snapshot of the vault', icon: <Archive size={16} />, keywords: 'backup zip', run: () => void takeSnapshot() },
       { id: 'snapshots', label: 'Show snapshots folder', icon: <Archive size={16} />, keywords: 'backups zip', run: () => void api.revealSnapshots().catch((e) => setError(String(e))) },
       ...(activeNote ? [{ id: 'attach', label: 'Attach a file to this note…', icon: <Paperclip size={16} />, keywords: 'upload insert embed', run: () => void pickFile().then((f) => f && activeEditor.current && insertAttachments(activeEditor.current, [f])) }] : []),
@@ -611,6 +614,7 @@ export function App() {
         sync={syncStatus}
         syncing={syncing}
         onSync={() => void syncNow()}
+        onSyncSettings={() => setSyncOpen(true)}
         onInbox={() => openInbox()}
         onToday={() => void openToday()}
         onGraph={() => showGraph(graphMode)}
@@ -671,6 +675,7 @@ export function App() {
           onImport={(url) => setImporting({ url })}
         />
       )}
+      {syncOpen && <SyncDialog status={syncStatus} onStatus={setSyncStatus} onClose={() => setSyncOpen(false)} onError={setError} />}
       {importing && (
         <ImportDialog
           request={importing}

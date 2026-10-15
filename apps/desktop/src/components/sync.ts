@@ -4,8 +4,9 @@ import type { SyncStatus } from '../api'
 export function syncSummary(status: SyncStatus | null): string {
   if (!status || !status.enabled) return 'Sync off'
   const others = status.devices.filter((d) => !d.this_device).length
-  if (others === 0) return 'Sync on'
-  return others === 1 ? '1 other device' : `${others} other devices`
+  const via = status.relay ? ' via relay' : ''
+  if (others === 0) return `Sync on${via}`
+  return others === 1 ? `1 other device${via}` : `${others} other devices${via}`
 }
 
 /** "just now", "3 min ago", "2 h ago", or a date. */

@@ -1,0 +1,27 @@
+[package]
+name = "graphite-relay"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Self-hosted sync relay for Graphite vaults: stores encrypted objects and tells devices when they change."
+
+[[bin]]
+name = "graphite-relay"
+path = "src/main.rs"
+
+[dependencies]
+axum = { version = "0.8", features = ["ws"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "fs", "sync", "time", "signal"] }
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+futures-util = "0.3"
+
+[dev-dependencies]
+graphite-core = { path = "../../core" }
+tempfile.workspace = true
+tungstenite.workspace = true

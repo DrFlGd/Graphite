@@ -8,8 +8,8 @@ use std::sync::Mutex;
 
 use graphite_core::{
     Asset, AssetHit, AssetKind, Backlink, Graph, ImportOptions, ImportReport, Item, ItemFilter, ItemKind, ItemRow,
-    ItemStatus, Note, NoteSummary, Progress, ProjectHub, QueryResult, SearchHit, Snapshot, SourceKind, SourceRow,
-    SyncReport, SyncStatus, Template, Tools, UpdateCheck, Vault, VaultInfo, Version, Watcher,
+    ItemStatus, Note, NoteSummary, Progress, ProjectHub, QueryResult, RelayConfig, SearchHit, Snapshot, SourceKind,
+    SourceRow, SyncReport, SyncStatus, Template, Tools, UpdateCheck, Vault, VaultConfig, VaultInfo, Version, Watcher,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -26,6 +26,10 @@ struct AppState {
     sync_timer: AtomicBool,
     /// Whether the daily snapshot thread has been started.
     snapshot_timer: AtomicBool,
+    /// Whether the thread listening to the relay has been started.
+    relay_listener: AtomicBool,
+    /// Bumped when the relay settings change so the listener reconnects.
+    relay_generation: std::sync::atomic::AtomicU64,
 }
 
 /// Take a vault snapshot if the newest is a day old, and check again every
@@ -73,11 +77,26 @@ fn run_sync(app: &AppHandle) -> Option<SyncReport> {
     let outcome = (|| {
         let mut guard = state.vault.lock().ok()?;
         let vault = guard.as_mut()?;
-        if !vault.sync_enabled() {
+        let result = if vault.relay_config().is_some() {
+            // The relay pass reconciles notes itself.
+            vault.relay_sync().map(|r| {
+                let mut assets: Vec<String> = r
+                    .downloaded
+                    .iter()
+                    .chain(r.deleted.iter())
+                    .filter(|p| !p.starts_with(".graphite"))
+                    .cloned()
+                    .collect();
+                assets.sort();
+                (r.sync, assets)
+            })
+        } else if vault.sync_enabled() {
+            vault.sync_now().map(|r| (r, Vec::new()))
+        } else {
             return None;
-        }
-        match vault.sync_now() {
-            Ok(report) => Some((report, vault.sync_status().ok())),
+        };
+        match result {
+            Ok((report, assets)) => Some((report, assets, vault.sync_status().ok())),
             Err(e) => {
                 tracing::warn!("sync: {e}");
                 None
@@ -85,17 +104,11 @@ fn run_sync(app: &AppHandle) -> Option<SyncReport> {
         }
     })();
     state.syncing.store(false, Ordering::SeqCst);
-    let (report, status) = outcome?;
+    let (report, assets, status) = outcome?;
     let mut ids = report.pulled.clone();
     ids.extend(report.deleted.iter().cloned());
-    if !ids.is_empty() {
-        let _ = app.emit(
-            "vault://changed",
-            ChangedPayload {
-                ids,
-                assets: Vec::new(),
-            },
-        );
+    if !ids.is_empty() || !assets.is_empty() {
+        let _ = app.emit("vault://changed", ChangedPayload { ids, assets });
     }
     if let Some(status) = status {
         let _ = app.emit(
@@ -107,6 +120,90 @@ fn run_sync(app: &AppHandle) -> Option<SyncReport> {
         );
     }
     Some(report)
+}
+
+/// Keep a WebSocket open to the relay (when one is configured) and run a
+/// pass whenever it announces a change, so edits from other devices show
+/// up within a second or two instead of at the next minute.
+fn start_relay_listener(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    if state.relay_listener.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        let mut backoff = 2u64;
+        loop {
+            let state = handle.state::<AppState>();
+            let generation = state.relay_generation.load(Ordering::SeqCst);
+            let target = state
+                .vault
+                .lock()
+                .ok()
+                .and_then(|g| g.as_ref().and_then(|v| v.relay_config().cloned()))
+                .and_then(|c| Some((c.socket_url().ok()?, c.auth_token().ok()?)));
+            let Some((url, token)) = target else {
+                std::thread::sleep(std::time::Duration::from_secs(5));
+                continue;
+            };
+            match listen_to_relay(&handle, &url, &token, generation) {
+                Ok(()) => backoff = 2,
+                Err(e) => {
+                    tracing::debug!("relay socket: {e}");
+                    std::thread::sleep(std::time::Duration::from_secs(backoff));
+                    backoff = (backoff * 2).min(60);
+                }
+            }
+        }
+    });
+}
+
+/// One connection to the relay's socket; returns when it closes or the
+/// relay settings change.
+fn listen_to_relay(app: &AppHandle, url: &str, token: &str, generation: u64) -> Result<(), String> {
+    use tungstenite::client::IntoClientRequest;
+    let mut request = url.into_client_request().map_err(err)?;
+    request
+        .headers_mut()
+        .insert("Authorization", format!("Bearer {token}").parse().map_err(err)?);
+    let (rest, default_port) = url
+        .strip_prefix("wss://")
+        .map(|r| (r, 443))
+        .or_else(|| url.strip_prefix("ws://").map(|r| (r, 80)))
+        .ok_or("bad relay URL")?;
+    let authority = rest.split('/').next().unwrap_or("");
+    let host = if authority.contains(':') {
+        authority.to_string()
+    } else {
+        format!("{authority}:{default_port}")
+    };
+    let stream = std::net::TcpStream::connect(&host).map_err(err)?;
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(45)))
+        .map_err(err)?;
+    let (mut socket, _) = tungstenite::client_tls(request, stream).map_err(err)?;
+    loop {
+        let state = app.state::<AppState>();
+        if state.relay_generation.load(Ordering::SeqCst) != generation {
+            let _ = socket.close(None);
+            return Ok(());
+        }
+        match socket.read() {
+            Ok(tungstenite::Message::Text(_)) => {
+                run_sync(app);
+            }
+            Ok(tungstenite::Message::Close(_)) => return Ok(()),
+            Ok(_) => {}
+            Err(tungstenite::Error::Io(e))
+                if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) =>
+            {
+                socket
+                    .send(tungstenite::Message::Ping(Default::default()))
+                    .map_err(err)?;
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+    }
 }
 
 /// Sync every minute while the app runs, so edits made on other devices
@@ -261,6 +358,7 @@ fn open_vault(app: AppHandle, state: State<AppState>, path: String) -> CmdResult
     std::thread::spawn(move || run_sync(&h));
     start_sync_timer(&app);
     start_snapshot_timer(&app);
+    start_relay_listener(&app);
     Ok(info)
 }
 
@@ -340,6 +438,81 @@ async fn sync_now(app: AppHandle) -> CmdResult<SyncReport> {
 #[tauri::command]
 fn sync_status(state: State<AppState>) -> CmdResult<SyncStatus> {
     with_vault(&state, |v| v.sync_status())
+}
+
+/// Connect to a relay with `config`, run a first pass to prove it works
+/// (dropping the settings again if it does not), and report the new status.
+fn connect_relay(app: &AppHandle, config: RelayConfig) -> CmdResult<SyncStatus> {
+    let state = app.state::<AppState>();
+    let mut guard = state.vault.lock().map_err(err)?;
+    let vault = guard.as_mut().ok_or_else(|| "no vault open".to_string())?;
+    vault.set_relay(Some(config)).map_err(err)?;
+    if let Err(e) = vault.relay_sync() {
+        let _ = vault.set_relay(None);
+        return Err(err(e));
+    }
+    state.relay_generation.fetch_add(1, Ordering::SeqCst);
+    let status = vault.sync_status().map_err(err)?;
+    drop(guard);
+    let _ = app.emit(
+        "vault://changed",
+        ChangedPayload {
+            ids: Vec::new(),
+            assets: Vec::new(),
+        },
+    );
+    Ok(status)
+}
+
+/// Make a new key for a relay and connect with it; returns the invite.
+#[tauri::command]
+async fn relay_create(app: AppHandle, url: String) -> CmdResult<String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let config = RelayConfig::new(&url).map_err(err)?;
+        let invite = config.invite();
+        connect_relay(&app, config)?;
+        Ok(invite)
+    })
+    .await
+    .map_err(err)?
+}
+
+#[tauri::command]
+async fn relay_connect(app: AppHandle, invite: String) -> CmdResult<SyncStatus> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let config = RelayConfig::from_invite(&invite).map_err(err)?;
+        connect_relay(&app, config)
+    })
+    .await
+    .map_err(err)?
+}
+
+#[tauri::command]
+fn relay_invite(state: State<AppState>) -> CmdResult<Option<String>> {
+    with_vault(&state, |v| Ok(v.relay_config().map(|c| c.invite())))
+}
+
+#[tauri::command]
+fn relay_disconnect(app: AppHandle, state: State<AppState>) -> CmdResult<SyncStatus> {
+    let status = with_vault(&state, |v| {
+        v.set_relay(None)?;
+        v.sync_status()
+    })?;
+    app.state::<AppState>().relay_generation.fetch_add(1, Ordering::SeqCst);
+    Ok(status)
+}
+
+#[tauri::command]
+fn get_config(state: State<AppState>) -> CmdResult<VaultConfig> {
+    with_vault(&state, |v| Ok(v.config()))
+}
+
+#[tauri::command]
+fn set_config(state: State<AppState>, config: VaultConfig) -> CmdResult<VaultConfig> {
+    with_vault(&state, |v| {
+        v.save_config(&config)?;
+        Ok(v.config())
+    })
 }
 
 #[tauri::command]
@@ -823,6 +996,12 @@ pub fn run() {
             classify_url,
             sync_now,
             sync_status,
+            relay_create,
+            relay_connect,
+            relay_invite,
+            relay_disconnect,
+            get_config,
+            set_config,
             versions,
             version_note,
             restore_version,

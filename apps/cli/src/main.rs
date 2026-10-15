@@ -25,6 +25,23 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+enum RelayCmd {
+    /// Make a new key for a relay and print the invite for the other devices
+    Create {
+        /// The relay's address, such as https://relay.example.com
+        url: String,
+    },
+    /// Connect this device with an invite shown on another device
+    Connect { invite: String },
+    /// Print the invite for this vault's relay
+    Invite,
+    /// Stop syncing through the relay on this device
+    Disconnect,
+    /// Show the relay and what has been exchanged
+    Status,
+}
+
+#[derive(Subcommand)]
 enum Cmd {
     /// Initialise a vault (creates notes/, attachments/, .graphite/) and index it
     Init,
@@ -108,6 +125,17 @@ enum Cmd {
     },
     /// Show this device's id and name
     Device,
+    /// Sync through a relay server (for devices without a shared folder)
+    Relay {
+        #[command(subcommand)]
+        action: RelayCmd,
+    },
+    /// Show or change this vault's settings on this device
+    Config {
+        /// Files over this many MB are referenced in place and stay on this device
+        #[arg(long)]
+        large_file_mb: Option<u64>,
+    },
     /// List a note's saved versions, newest first
     History {
         /// Note (title or id)
@@ -219,6 +247,22 @@ enum Cmd {
         #[arg(long, default_value_t = 1)]
         hops: usize,
     },
+}
+
+fn print_relay_report(r: &graphite_core::RelayReport) {
+    println!(
+        "sent {}, received {}, removed {}, notes pulled {}",
+        r.uploaded.len(),
+        r.downloaded.len(),
+        r.deleted.len(),
+        r.sync.pulled.len()
+    );
+    if !r.kept_local.is_empty() {
+        println!(
+            "{} file(s) over the large-file limit stay on this device",
+            r.kept_local.len()
+        );
+    }
 }
 
 fn main() {
@@ -437,6 +481,13 @@ fn run() -> Result<()> {
                         );
                     }
                 }
+            } else if vault.relay_config().is_some() {
+                let r = vault.relay_sync()?;
+                if cli.json {
+                    println!("{}", serde_json::to_string_pretty(&r)?);
+                } else {
+                    print_relay_report(&r);
+                }
             } else {
                 let r = vault.sync_now()?;
                 if cli.json {
@@ -457,6 +508,66 @@ fn run() -> Result<()> {
                         );
                     }
                 }
+            }
+        }
+        Cmd::Relay { action } => match action {
+            RelayCmd::Create { url } => {
+                let config = graphite_core::RelayConfig::new(&url)?;
+                vault.set_relay(Some(config.clone()))?;
+                let r = vault.relay_sync().inspect_err(|_| {
+                    let _ = vault.set_relay(None);
+                })?;
+                println!("Connected. Paste this invite on your other devices (it is the key to the vault, so keep it private):\n{}", config.invite());
+                print_relay_report(&r);
+            }
+            RelayCmd::Connect { invite } => {
+                let config = graphite_core::RelayConfig::from_invite(&invite)?;
+                vault.set_relay(Some(config))?;
+                let r = vault.relay_sync().inspect_err(|_| {
+                    let _ = vault.set_relay(None);
+                })?;
+                println!("Connected.");
+                print_relay_report(&r);
+            }
+            RelayCmd::Invite => match vault.relay_config() {
+                Some(c) => println!("{}", c.invite()),
+                None => println!("This vault is not connected to a relay on this device."),
+            },
+            RelayCmd::Disconnect => {
+                vault.set_relay(None)?;
+                println!("Disconnected. The relay keeps what was sent; other devices are not affected.");
+            }
+            RelayCmd::Status => match vault.relay_status() {
+                Some(st) => {
+                    if cli.json {
+                        println!("{}", serde_json::to_string_pretty(&st)?);
+                    } else {
+                        println!(
+                            "relay {}\n  last exchange {}\n  {} files exchanged",
+                            st.url,
+                            st.last
+                                .map(|t| t.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+                                .unwrap_or_else(|| "never".into()),
+                            st.files
+                        );
+                        for p in st.kept_local {
+                            println!("  kept on this device (over the large-file limit): {p}");
+                        }
+                    }
+                }
+                None => println!("This vault is not connected to a relay on this device."),
+            },
+        },
+        Cmd::Config { large_file_mb } => {
+            let mut config = vault.config();
+            if let Some(mb) = large_file_mb {
+                config.large_file_mb = mb;
+                vault.save_config(&config)?;
+            }
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&config)?);
+            } else {
+                println!("large_file_mb = {}", config.large_file_mb);
             }
         }
         Cmd::Device => {

@@ -97,6 +97,9 @@ pub struct SyncStatus {
     pub device: Device,
     pub devices: Vec<SyncDevice>,
     pub last_sync: Option<DateTime<Utc>>,
+    /// The relay this device syncs through, when connected to one.
+    #[serde(default)]
+    pub relay: Option<crate::relay::RelayStatus>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -580,6 +583,7 @@ impl Vault {
             device: self.device.clone(),
             devices,
             last_sync,
+            relay: self.relay_status(),
         })
     }
 

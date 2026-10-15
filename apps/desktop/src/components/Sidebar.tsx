@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { CalendarDays, Download, FilePlus2, FolderOpen, Inbox, LayoutTemplate, ListChecks, Paperclip, RefreshCw, Search, Waypoints } from 'lucide-react'
+import { CalendarDays, Download, FilePlus2, FolderOpen, Inbox, LayoutTemplate, ListChecks, Paperclip, RefreshCw, Search, Settings2, Waypoints } from 'lucide-react'
 import type { NoteSummary, SyncStatus, VaultInfo } from '../api'
 import { syncSummary } from './sync'
 
@@ -25,6 +25,7 @@ interface Props {
   sync: SyncStatus | null
   syncing: boolean
   onSync: () => void
+  onSyncSettings: () => void
   onInbox: () => void
   onToday: () => void
   onGraph: () => void
@@ -33,7 +34,7 @@ interface Props {
   onSources: () => void
 }
 
-export function Sidebar({ vault, notes, currentId, onOpen, onCreate, onCreateFromTemplate, onPickVault, onSearch, inboxCount, inboxOpen, graphOpen, tasksOpen, filesOpen, sourcesOpen, openTasks, sourceUpdates, sync, syncing, onSync, onInbox, onToday, onGraph, onTasks, onFiles, onSources }: Props) {
+export function Sidebar({ vault, notes, currentId, onOpen, onCreate, onCreateFromTemplate, onPickVault, onSearch, inboxCount, inboxOpen, graphOpen, tasksOpen, filesOpen, sourcesOpen, openTasks, sourceUpdates, sync, syncing, onSync, onSyncSettings, onInbox, onToday, onGraph, onTasks, onFiles, onSources }: Props) {
   const [filter, setFilter] = useState('')
   const [newTitle, setNewTitle] = useState('')
 
@@ -147,6 +148,9 @@ export function Sidebar({ vault, notes, currentId, onOpen, onCreate, onCreateFro
         >
           <RefreshCw size={12} className={syncing ? 'is-spinning' : ''} />
           <span>{syncing ? 'Syncing' : syncSummary(sync)}</span>
+        </button>
+        <button type="button" className="sidebar__sync sidebar__sync-settings" onClick={onSyncSettings} title="Sync settings: devices, relay, large files" aria-label="Sync settings">
+          <Settings2 size={12} />
         </button>
       </div>
     </aside>

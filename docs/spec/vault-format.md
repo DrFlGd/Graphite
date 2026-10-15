@@ -17,10 +17,11 @@ MyVault/
 └── .graphite/             Graphite's own state (never synced, never hand-edited)
     ├── devices/<id>/      this device's index.sqlite (rebuildable)
     ├── sync/<id>/         per-note Automerge documents, one folder per device (M4)
+    ├── relay/<id>.json    what this device last exchanged with its relay (M4)
+    ├── config.json        this vault's settings on this device (large-file limit)
     ├── history/<note-id>/ saved versions of each note, plain Markdown (M4)
     ├── snapshots/         zip snapshots of the vault minus .graphite/ (M4)
     ├── derived/           thumbnails, transcripts, OCR text, converted previews
-    └── config.json        vault settings
 ```
 
 Rules:
@@ -143,6 +144,16 @@ A **pass** (`graphite sync`, or the app on open, every minute and whenever files
 Recorded edits are deterministic: the file's content is diffed against the document state the file was last reconciled at (or, for a file the sync client replaced, the closest recent state in the document's history), by an actor derived from that state and the content. Two devices that see the same file before each other's documents therefore produce the identical change, which merges as one. The content hash is over title, type, tags, aliases, created, updated, properties and body, never the path or front-matter formatting.
 
 What stays plain: the notes. Sync adds no markers to Markdown, and deleting `.graphite/sync/` on every device only forgets the shared history; the files are intact and the next pass starts over from them. Files under `.graphite/devices/` (each device's index) and `.graphite/derived/` may be excluded from the sync client; `.graphite/sync/` must be included.
+
+### Relay (M4)
+
+A **relay** carries the same files a shared folder would, for devices that have no folder in common (a phone, a desktop elsewhere), through a small self-hosted server (`apps/relay`). What goes through it: each device's own `.graphite/sync/<device-id>/` folder (its Automerge documents and `device.json`) and the vault's assets up to the large-file limit. Notes never do; a device writes them from the documents it receives, exactly as with a folder. A device that uses both a shared folder and a relay is fine: a file that arrives twice is recognised by its content.
+
+Everything is encrypted on the device before it is sent. The vault key is 32 random bytes made on the first device and pasted on the others as an **invite**, `<relay url>#<key>`, kept outside the vault in the OS config directory (`~/.config/graphite/relays/`, or `GRAPHITE_RELAY_CONFIG_DIR`; `GRAPHITE_RELAY` holds an invite for the CLI and tests). From the key the device derives the vault's id on the relay and a bearer token by HMAC-SHA256, so the relay can tell key holders from strangers without being able to read anything, and files each object under an HMAC of its path, so even file names stay private. An object is `GRL1`, a random 24-byte nonce, then XChaCha20-Poly1305 over `[path length][path][deleted flag][content]` with the object id as associated data. A deleted file is an object with the flag set and no content.
+
+A pass (`graphite sync` when a relay is configured; the app on open, every minute, and the moment the relay's WebSocket announces a change) reconciles notes, downloads every object newer than the last pass, merges the documents, then uploads whatever changed locally and a tombstone for every asset that disappeared. For assets the relay's version wins when both sides changed one; the local one is kept beside it as `<name> (<device>'s conflicted copy).<ext>`. `.graphite/relay/<device-id>.json` records the relay sequence number reached and, per file, the content hash and relay sequence last exchanged, so a pass only moves what changed; deleting it makes the next pass re-send everything, which is harmless.
+
+**Large files (E9):** `.graphite/config.json` holds `large_file_mb` (default 100). A file imported from outside the vault that is bigger is not copied in: the link points at it where it is (`file://…`). A file in the vault that is bigger is not sent through the relay and the status shows it as kept on this device.
 
 ### History and snapshots (M4)
 

@@ -23,8 +23,8 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
-      - run: cargo clippy -p graphite-core -p graphite-cli --all-targets -- -D warnings
-      - run: cargo test -p graphite-core -p graphite-cli
+      - run: cargo clippy -p graphite-core -p graphite-cli -p graphite-relay --all-targets -- -D warnings
+      - run: cargo test -p graphite-core -p graphite-cli -p graphite-relay
 
   ui:
     name: UI package + desktop web build
