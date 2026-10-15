@@ -12,6 +12,7 @@ MyVault/
 │   └── …/*.md
 ├── attachments/           files; sub-folders by project are a convention, not a rule
 │   └── sources/           imported content (M3): repos, page archives, video
+├── templates/             the vault's own note and project templates (optional)
 ├── canvases/              whiteboards (M5), *.canvas.json
 └── .graphite/             Graphite's own state (never synced, never hand-edited)
     ├── index.sqlite       full-text index, links, properties (rebuildable)
@@ -115,13 +116,42 @@ Quick capture (global shortcut, CLI `graphite capture`, phone share sheet in M4)
 
 Daily notes live at `notes/Daily/YYYY-MM-DD.md` with `type: daily` and the date as title. Opening "today" creates the file if it does not exist and never overwrites it.
 
+### Projects, decisions and templates
+
+A **project** is a note with `type: project`. Nothing else is required: its tasks are the tasks attributed to it (see above), its decisions are `type: decision` notes that link to it or name it in a `project` property, its sources are `type: source` notes linked either way, and its linked notes are everything else linking in or out. The hub view is computed from the index; the file holds only what the user wrote.
+
+A **decision** is a note with `type: decision`, usually with `status` (`proposed`, `accepted`, `rejected`, `superseded`), `date` and `project: "[[Project]]"` properties and `## Context`, `## Options`, `## Outcome` headings. Only the type matters to Graphite.
+
+**Templates** fill a new note. Graphite ships `project`, `research`, `build`, `software`, `writing`, `decision` and `query`. A vault adds or replaces templates with notes under `templates/` whose front-matter has `type: template`; the file name (lower-cased, spaces to `-`) is the template's name. Template front-matter keys with a meaning: `description` (shown in pickers), `for` or `note_type` (the `type` of the note it creates, default `note`), `folder` (where it is created; defaults by type to `notes/Projects`, `notes/Decisions`, `notes/Ideas`, `notes/Queries`, else `notes/`). Every other key becomes a property of the new note. In the body and in property values, `{{title}}`, `{{date}}` (`YYYY-MM-DD`), `{{datetime}}` (RFC 3339) and `{{body}}` are replaced; `{{body}}` is the note's existing text when an idea is promoted to a project (otherwise empty) and is appended at the end when the template has no slot for it.
+
+Promoting a note to a project changes its `type`, adds the template's properties where the note has none, and wraps its text in the template body. The file stays where it is and keeps its id, so nothing linking to it changes.
+
+### Queries and saved queries
+
+Every list, table, board and tracker view is a query. A query is one line of space-separated terms; `"quoted text"` and `[[links]]` stay together.
+
+| Term | Meaning |
+| --- | --- |
+| `key:value` | Field equals value (case-insensitive). `key:!value` not equal, `key:>v` `key:<v` `key:>=v` `key:<=v` compare (numbers, dates and `p1`–`p4` compare as such), `key:*` the field is set. |
+| `#tag` | Has the tag (a tag's parents match its children: `#hardware` matches `hardware/motors`). |
+| `word` | Free text: full-text search over notes, substring match on task and gap text. |
+| `sort:field,-field` | Sort ascending by `field`, descending with `-`. |
+| `group:field` | Group the rows by a field; the result lists each group's key and size. |
+| `limit:n` | At most `n` rows. |
+
+`type:task`, `type:gap` or `type:item` makes the query run over tasks and gaps; any other query runs over notes.
+
+Note keys: `type`, `tag`, `in` (folder or path prefix; `folder`, `path`), `title`, `links` or `to` (links to a note), `from` or `backlinks` (linked from a note), `project` (the `project` property), `created`, `updated`, `id`, and any front-matter property by name. Item keys: `type`, `project`, `note`, `in`, `status` (`open` also matches `doing`; `closed` is done, cancelled or answered), `due`, `priority`, `tag`, `heading`, `text`, `depth`, and any inline field by name. Dates accept `today`, `tomorrow`, `yesterday` and offsets such as `+7d`, `-2w`, `+1m`, `+1y`.
+
+A **saved query** is a note with `type: query` and the query in a `query` property; `view` (`list`, `table`, `board`, `tree`) is a hint for how to show it. Opening the note runs the query.
+
 ## File names
 
 New notes are written as `<folder>/<Title>.md`, with characters that are illegal on any supported OS replaced (`/ \ : * ? " < > | # ^ [ ]`) and whitespace collapsed. If the name is taken, creation fails (the UI asks for another title) rather than silently suffixing.
 
 ## Index (`.graphite/index.sqlite`)
 
-SQLite. Tables: `notes`, `tags`, `aliases`, `properties`, `links`, and the FTS5 table `notes_fts`. The schema version lives in `meta`; any mismatch triggers a rebuild. The index is kept current by mtime+size comparison on each sync and by a file watcher while an app is open.
+SQLite. Tables: `notes`, `tags`, `aliases`, `properties`, `links`, `items` (tasks and gaps), and the FTS5 table `notes_fts`. The schema version lives in `meta`; any mismatch triggers a rebuild. The index is kept current by mtime+size comparison on each sync and by a file watcher while an app is open.
 
 ## Identity and stability
 

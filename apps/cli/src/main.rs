@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use graphite_core::{ItemFilter, ItemKind, ItemRow, ItemStatus, Vault};
+use graphite_core::{Domain, ItemFilter, ItemKind, ItemRow, ItemStatus, Vault};
 
 #[derive(Parser)]
 #[command(name = "graphite", version, about = "Graphite second-brain CLI")]
@@ -43,9 +43,31 @@ enum Cmd {
         r#type: Option<String>,
         #[arg(long)]
         folder: Option<String>,
+        /// Start from a template (see `graphite templates`)
+        #[arg(long)]
+        template: Option<String>,
         /// Read the body from stdin
         #[arg(long)]
         stdin: bool,
+    },
+    /// List templates: built-in ones plus templates/*.md in the vault
+    Templates,
+    /// Turn a note (an idea, say) into a project, keeping its text
+    Promote {
+        target: String,
+        /// Project template to use (default: `project`)
+        #[arg(long)]
+        template: Option<String>,
+    },
+    /// A project's hub: progress, tasks, gaps, decisions, linked notes
+    Hub { project: String },
+    /// Run a query, e.g. `graphite query 'type:task status:open sort:due'`,
+    /// or the saved query in a `type: query` note with `--saved`
+    Query {
+        query: Vec<String>,
+        /// Run the query stored in this note (id, title or path)
+        #[arg(long)]
+        saved: Option<String>,
     },
     /// Quick capture into the inbox: `graphite capture "a thought"` or pipe text in
     Capture {
@@ -159,9 +181,13 @@ fn run() -> Result<()> {
             title,
             r#type,
             folder,
+            template,
             stdin,
         } => {
-            let mut note = vault.create(&title, r#type.as_deref(), folder.as_deref())?;
+            let mut note = match template {
+                Some(t) => vault.create_from_template(&title, &t, folder.as_deref())?,
+                None => vault.create(&title, r#type.as_deref(), folder.as_deref())?,
+            };
             if stdin {
                 let mut body = String::new();
                 std::io::stdin().read_to_string(&mut body)?;
@@ -271,6 +297,118 @@ fn run() -> Result<()> {
             let kind = if gap { ItemKind::Gap } else { ItemKind::Task };
             let item = vault.add_item(&id, kind, &text.join(" "))?;
             println!("{}:{}\t{}", item.note_id, item.line, item.text);
+        }
+        Cmd::Templates => {
+            let templates = vault.templates()?;
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&templates)?);
+            } else {
+                for t in templates {
+                    println!(
+                        "{:<12} {:<9} {}{}",
+                        t.name,
+                        t.note_type,
+                        t.description,
+                        if t.builtin { "" } else { "  (vault)" }
+                    );
+                }
+            }
+        }
+        Cmd::Promote { target, template } => {
+            let id = resolve(&vault, &target)?;
+            let note = vault.promote_to_project(&id, template.as_deref())?;
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&note)?);
+            } else {
+                println!("{}\t{}\t{}", note.id, note.note_type, note.path);
+            }
+        }
+        Cmd::Hub { project } => {
+            let id = resolve(&vault, &project)?;
+            let hub = vault.project_hub(&id)?;
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&hub)?);
+            } else {
+                let p = &hub.progress;
+                println!("{} ({})", hub.project.title, hub.project.path);
+                println!(
+                    "{}% done: {} of {} tasks, {} open gaps",
+                    p.percent, p.done, p.tasks, p.gaps_open
+                );
+                if !hub.tasks.is_empty() {
+                    println!("\nTasks");
+                    print_items(&hub.tasks, false)?;
+                }
+                if !hub.gaps.is_empty() {
+                    println!("\nOpen questions");
+                    print_items(&hub.gaps, false)?;
+                }
+                if !hub.decisions.is_empty() {
+                    println!("\nDecisions");
+                    for d in &hub.decisions {
+                        println!("  {}", d.title);
+                    }
+                }
+                if !hub.sources.is_empty() {
+                    println!("\nSources");
+                    for s in &hub.sources {
+                        println!("  {}", s.title);
+                    }
+                }
+                if !hub.linked.is_empty() {
+                    println!("\nLinked notes");
+                    for l in &hub.linked {
+                        let rel = l.relation.as_deref().map(|r| format!(" ({r})")).unwrap_or_default();
+                        println!("  {} {}{}", if l.incoming { "<-" } else { "->" }, l.note.title, rel);
+                    }
+                }
+            }
+        }
+        Cmd::Query { query, saved } => {
+            let result = match saved {
+                Some(target) => {
+                    let id = resolve(&vault, &target)?;
+                    vault.run_saved_query(&id)?
+                }
+                None => vault.query(&query.join(" "))?,
+            };
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                match result.domain {
+                    Domain::Items => print_items(&result.items, false)?,
+                    Domain::Notes => {
+                        for n in &result.notes {
+                            let props: Vec<String> = n
+                                .properties
+                                .iter()
+                                .filter_map(|(k, v)| match v {
+                                    serde_json::Value::String(s) => Some(format!("{k}={s}")),
+                                    serde_json::Value::Number(x) => Some(format!("{k}={x}")),
+                                    serde_json::Value::Bool(b) => Some(format!("{k}={b}")),
+                                    _ => None,
+                                })
+                                .collect();
+                            println!(
+                                "{}\t{}\t{}\t{}",
+                                n.note.id,
+                                n.note.note_type,
+                                n.note.title,
+                                props.join(" ")
+                            );
+                        }
+                    }
+                }
+                if !result.groups.is_empty() {
+                    let groups: Vec<String> = result
+                        .groups
+                        .iter()
+                        .map(|g| format!("{} ({})", g.key, g.count))
+                        .collect();
+                    println!("groups: {}", groups.join(", "));
+                }
+                println!("{} result(s)", result.total);
+            }
         }
         Cmd::Progress { project } => {
             let id = resolve(&vault, &project)?;
