@@ -930,6 +930,7 @@ fn toggle_capture_window(app: AppHandle) {
 }
 
 /// Bring the main window forward and open a note there (from the capture window).
+#[cfg(desktop)]
 #[tauri::command]
 fn open_in_main(app: AppHandle, id: String) -> CmdResult<()> {
     if let Some(w) = app.get_webview_window("main") {
@@ -1083,6 +1084,7 @@ pub fn run() {
             hide_capture_window,
             #[cfg(desktop)]
             toggle_capture_window,
+            #[cfg(desktop)]
             open_in_main,
         ])
         .run(tauri::generate_context!())
