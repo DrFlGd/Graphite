@@ -9,7 +9,6 @@ kbd { font-family: var(--gr-mono); font-size: 0.85em; background: var(--gr-bg-su
 
 .app { display: grid; grid-template-columns: 260px 1fr 280px; height: 100%; overflow: hidden; }
 .app--no-context { grid-template-columns: 260px 1fr; }
-.app__main { min-width: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--gr-bg); }
 .app__empty { margin: auto; color: var(--gr-fg-muted); text-align: center; }
 .app__error { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); background: #b3261e; color: white; padding: 8px 14px; border-radius: 8px; box-shadow: var(--gr-shadow); cursor: pointer; max-width: 80vw; }
 
@@ -143,3 +142,20 @@ kbd { font-family: var(--gr-mono); font-size: 0.85em; background: var(--gr-bg-su
 /* Palette extras */
 .modal__row-key { margin-left: auto; align-self: center; white-space: nowrap; }
 .modal__none { padding: 10px 12px; color: var(--gr-fg-muted); font-size: 13px; }
+
+/* Panes and tabs */
+.panes { display: flex; min-width: 0; min-height: 0; height: 100%; }
+.pane { flex: 1 1 0; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--gr-bg); }
+.pane + .pane { border-left: 1px solid var(--gr-border); }
+.pane__tabs { display: flex; align-items: stretch; gap: 2px; padding: 4px 6px 0; background: var(--gr-bg-elev); border-bottom: 1px solid var(--gr-border); overflow-x: auto; scrollbar-width: none; }
+.pane__tab { display: inline-flex; align-items: center; gap: 6px; padding: 5px 6px 5px 10px; border-radius: var(--gr-radius) var(--gr-radius) 0 0; color: var(--gr-fg-muted); cursor: default; max-width: 220px; min-width: 0; font-size: 13px; border: 1px solid transparent; border-bottom: 0; user-select: none; }
+.pane__tab:hover { background: var(--gr-bg-subtle); }
+.pane__tab.is-current { background: var(--gr-bg); color: var(--gr-fg); border-color: var(--gr-border); margin-bottom: -1px; }
+.pane.is-active .pane__tab.is-current { box-shadow: inset 0 2px 0 var(--gr-accent); }
+.pane__tab-title { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.pane__tab-close { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border: 0; border-radius: 4px; background: transparent; color: inherit; cursor: pointer; opacity: 0.6; }
+.pane__tab-close:hover { background: var(--gr-border); opacity: 1; }
+.pane__action { align-self: center; width: 24px; height: 24px; }
+.pane__body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.pane__body > * { flex: 1; min-height: 0; }
+.pane__empty { display: grid; place-items: center; color: var(--gr-fg-muted); text-align: center; padding: 24px; }

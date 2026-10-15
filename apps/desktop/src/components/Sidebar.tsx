@@ -6,7 +6,8 @@ interface Props {
   vault: VaultInfo
   notes: NoteSummary[]
   currentId: string | null
-  onOpen: (id: string) => void
+  /** `newTab` when the user Ctrl/Cmd-clicks or middle-clicks. */
+  onOpen: (id: string, newTab?: boolean) => void
   onCreate: (title: string) => void
   onPickVault: () => void
   onSearch: () => void
@@ -83,7 +84,18 @@ export function Sidebar({ vault, notes, currentId, onOpen, onCreate, onPickVault
             <ul>
               {items.map((n) => (
                 <li key={n.id}>
-                  <button type="button" className={`sidebar__note ${n.id === currentId ? 'is-current' : ''}`} onClick={() => onOpen(n.id)}>
+                  <button
+                    type="button"
+                    className={`sidebar__note ${n.id === currentId ? 'is-current' : ''}`}
+                    onClick={(e) => onOpen(n.id, e.ctrlKey || e.metaKey)}
+                    onAuxClick={(e) => {
+                      if (e.button === 1) {
+                        e.preventDefault()
+                        onOpen(n.id, true)
+                      }
+                    }}
+                    title="Click to open here, Ctrl+click for a new tab"
+                  >
                     <span className="sidebar__note-title">{n.title}</span>
                     {n.type !== 'note' && <span className="sidebar__note-type">{n.type}</span>}
                   </button>

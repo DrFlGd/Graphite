@@ -9,7 +9,7 @@ use crate::error::Result;
 use crate::links::{extract_links, normalise_target, LinkKind};
 use crate::note::{Note, NoteSummary};
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -90,7 +90,10 @@ pub struct Index {
 impl Index {
     pub fn open(path: &Path) -> Result<Index> {
         let conn = Connection::open(path)?;
-        conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;")?;
+        // The index is a rebuildable cache, so WAL + NORMAL (no fsync per
+        // commit) is the right trade: a power cut can only lose the last few
+        // commits, which the next sync redoes.
+        conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON;")?;
         let idx = Index { conn };
         idx.migrate()?;
         Ok(idx)
@@ -133,66 +136,78 @@ impl Index {
 
     /// Insert or replace a note. `mtime_ms`/`size` let the vault skip
     /// unchanged files on rescan.
+    /// Group many `upsert`/`remove_by_path` calls into one transaction
+    /// (a full sync of thousands of notes is ~20x faster that way). Pair with
+    /// `end_batch`; an error in between should go through `abort_batch`.
+    pub fn begin_batch(&mut self) -> Result<()> {
+        self.conn.execute_batch("BEGIN IMMEDIATE")?;
+        Ok(())
+    }
+
+    pub fn end_batch(&mut self) -> Result<()> {
+        self.conn.execute_batch("COMMIT")?;
+        Ok(())
+    }
+
+    pub fn abort_batch(&mut self) {
+        let _ = self.conn.execute_batch("ROLLBACK");
+    }
+
     pub fn upsert(&mut self, note: &Note, mtime_ms: i64, size: i64) -> Result<()> {
-        let tx = self.conn.transaction()?;
+        // A savepoint works on its own and inside a batch transaction alike.
+        let tx = self.conn.savepoint()?;
+        // FTS rows share the note's rowid: deleting by rowid is indexed, while
+        // deleting by the UNINDEXED id column would scan the whole table.
+        tx.prepare_cached("DELETE FROM notes_fts WHERE rowid IN (SELECT rowid FROM notes WHERE id = ?1 OR path = ?2)")?
+            .execute(params![note.id, note.path])?;
         // A note moved on disk keeps its id; a file whose id collides with another path wins by path.
-        tx.execute(
-            "DELETE FROM notes WHERE id = ?1 OR path = ?2",
-            params![note.id, note.path],
-        )?;
-        tx.execute("DELETE FROM notes_fts WHERE id = ?1", params![note.id])?;
-        tx.execute(
+        tx.prepare_cached("DELETE FROM notes WHERE id = ?1 OR path = ?2")?
+            .execute(params![note.id, note.path])?;
+        tx.prepare_cached(
             "INSERT INTO notes(id, path, title, type, created, updated, mtime_ms, size) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
-            params![
-                note.id,
-                note.path,
-                note.title,
-                note.note_type,
-                note.created.map(|d| d.to_rfc3339()),
-                note.updated.map(|d| d.to_rfc3339()),
-                mtime_ms,
-                size
-            ],
-        )?;
+        )?
+        .execute(params![
+            note.id,
+            note.path,
+            note.title,
+            note.note_type,
+            note.created.map(|d| d.to_rfc3339()),
+            note.updated.map(|d| d.to_rfc3339()),
+            mtime_ms,
+            size
+        ])?;
+        let rowid = tx.last_insert_rowid();
         for t in &note.tags {
-            tx.execute(
-                "INSERT OR IGNORE INTO tags(note_id, tag) VALUES (?1, ?2)",
-                params![note.id, t],
-            )?;
+            tx.prepare_cached("INSERT OR IGNORE INTO tags(note_id, tag) VALUES (?1, ?2)")?
+                .execute(params![note.id, t])?;
         }
         for a in &note.aliases {
-            tx.execute(
-                "INSERT OR IGNORE INTO aliases(note_id, alias) VALUES (?1, ?2)",
-                params![note.id, a],
-            )?;
+            tx.prepare_cached("INSERT OR IGNORE INTO aliases(note_id, alias) VALUES (?1, ?2)")?
+                .execute(params![note.id, a])?;
         }
         for (k, v) in &note.properties {
-            tx.execute(
-                "INSERT OR REPLACE INTO properties(note_id, key, value) VALUES (?1, ?2, ?3)",
-                params![note.id, k, v.to_string()],
-            )?;
+            tx.prepare_cached("INSERT OR REPLACE INTO properties(note_id, key, value) VALUES (?1, ?2, ?3)")?
+                .execute(params![note.id, k, v.to_string()])?;
         }
         for l in extract_links(&note.body) {
-            tx.execute(
+            tx.prepare_cached(
                 "INSERT INTO links(from_id, target, target_norm, heading, relation, kind, position) VALUES (?1,?2,?3,?4,?5,?6,?7)",
-                params![
-                    note.id,
-                    l.target,
-                    normalise_target(&l.target),
-                    l.heading,
-                    l.relation,
-                    match l.kind {
-                        LinkKind::Wiki => "wiki",
-                        LinkKind::Embed => "embed",
-                    },
-                    l.position as i64
-                ],
-            )?;
+            )?
+            .execute(params![
+                note.id,
+                l.target,
+                normalise_target(&l.target),
+                l.heading,
+                l.relation,
+                match l.kind {
+                    LinkKind::Wiki => "wiki",
+                    LinkKind::Embed => "embed",
+                },
+                l.position as i64
+            ])?;
         }
-        tx.execute(
-            "INSERT INTO notes_fts(id, title, body, tags) VALUES (?1, ?2, ?3, ?4)",
-            params![note.id, note.title, note.body, note.tags.join(" ")],
-        )?;
+        tx.prepare_cached("INSERT INTO notes_fts(rowid, id, title, body, tags) VALUES (?1, ?2, ?3, ?4, ?5)")?
+            .execute(params![rowid, note.id, note.title, note.body, note.tags.join(" ")])?;
         tx.commit()?;
         Ok(())
     }
@@ -203,8 +218,11 @@ impl Index {
             .query_row("SELECT id FROM notes WHERE path = ?1", params![path], |r| r.get(0))
             .optional()?;
         if let Some(id) = &id {
+            self.conn.execute(
+                "DELETE FROM notes_fts WHERE rowid IN (SELECT rowid FROM notes WHERE id = ?1)",
+                params![id],
+            )?;
             self.conn.execute("DELETE FROM notes WHERE id = ?1", params![id])?;
-            self.conn.execute("DELETE FROM notes_fts WHERE id = ?1", params![id])?;
         }
         Ok(id)
     }

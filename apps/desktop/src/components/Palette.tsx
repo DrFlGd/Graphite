@@ -19,7 +19,8 @@ interface Props {
   mode: PaletteMode
   commands: Command[]
   onClose: () => void
-  onOpen: (id: string) => void
+  /** Enter opens in the current tab; Ctrl/Cmd+Enter in a new one. */
+  onOpen: (id: string, newTab: boolean) => void
   onCreate: (title: string) => void
 }
 
@@ -69,11 +70,11 @@ export function Palette({ mode, commands, onClose, onOpen, onCreate }: Props) {
     ? filterCommands(commands, text).map((c) => ({ kind: 'cmd', c }))
     : [...hits.map((h) => ({ kind: 'hit' as const, h })), ...(text && !hits.some((h) => h.title.toLowerCase() === text.toLowerCase()) ? [{ kind: 'new' as const }] : [])]
 
-  const choose = (i: number) => {
+  const choose = (i: number, newTab = false) => {
     const row = rows[i]
     if (!row) return
     onClose()
-    if (row.kind === 'hit') onOpen(row.h.id)
+    if (row.kind === 'hit') onOpen(row.h.id, newTab)
     else if (row.kind === 'new') onCreate(text)
     else row.c.run()
   }
@@ -96,16 +97,16 @@ export function Palette({ mode, commands, onClose, onOpen, onCreate }: Props) {
             } else if (e.key === 'ArrowUp') {
               e.preventDefault()
               setSelected((s) => Math.max(s - 1, 0))
-            } else if (e.key === 'Enter') choose(selected)
+            } else if (e.key === 'Enter') choose(selected, e.ctrlKey || e.metaKey)
           }}
-          placeholder={commandMode ? 'Type a command' : 'Search notes, type a title to create one, or > for commands'}
+          placeholder={commandMode ? 'Type a command' : 'Search notes (Ctrl+Enter opens in a new tab), type a title to create one, or > for commands'}
           aria-label={commandMode ? 'Command' : 'Search'}
           className="modal__input"
         />
         <ul className="modal__list">
           {rows.map((row, i) => (
             <li key={row.kind === 'hit' ? row.h.id : row.kind === 'cmd' ? row.c.id : 'new'}>
-              <button type="button" className={`modal__row ${i === selected ? 'is-selected' : ''}`} onMouseEnter={() => setSelected(i)} onClick={() => choose(i)}>
+              <button type="button" className={`modal__row ${i === selected ? 'is-selected' : ''}`} onMouseMove={() => setSelected(i)} onClick={(e) => choose(i, e.ctrlKey || e.metaKey)}>
                 {row.kind === 'hit' ? <FileText size={16} /> : row.kind === 'new' ? <Plus size={16} /> : (row.c.icon ?? <ChevronRight size={16} />)}
                 <span className="modal__row-text">
                   <span className="modal__row-title">{row.kind === 'hit' ? row.h.title : row.kind === 'new' ? `Create “${text}”` : row.c.label}</span>
