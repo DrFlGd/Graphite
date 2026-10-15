@@ -180,6 +180,7 @@ export const api = {
   items: (filter: ItemFilter) => invoke<ItemRow[]>('items', { filter }),
   progress: (projectId: string) => invoke<Progress>('progress', { projectId }),
   setItemStatus: (noteId: string, line: number, status: ItemStatus) => invoke<Item>('set_item_status', { noteId, line, status }),
+  setItemField: (noteId: string, line: number, key: string, value: string) => invoke<Item>('set_item_field', { noteId, line, key, value }),
   answerGap: (noteId: string, line: number, answer: string) => invoke<Item>('answer_gap', { noteId, line, answer }),
   addItem: (noteId: string, kind: ItemKind, text: string) => invoke<Item>('add_item', { noteId, kind, text }),
   query: (query: string) => invoke<QueryResult>('query', { query }),

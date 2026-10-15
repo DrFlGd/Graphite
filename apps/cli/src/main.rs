@@ -114,6 +114,14 @@ enum Cmd {
     },
     /// Record the note that answers a gap
     Answer { note: String, line: usize, answer: String },
+    /// Set an inline field on a task or gap line (`due`, `priority`, `project`, …); an empty value removes it
+    Field {
+        note: String,
+        line: usize,
+        key: String,
+        #[arg(default_value = "")]
+        value: String,
+    },
     /// Add a task (or a gap with --gap) to a note
     Add {
         note: String,
@@ -286,6 +294,15 @@ fn run() -> Result<()> {
             };
             let item = vault.set_item_status(&id, line, status)?;
             println!("[{}] {}", item.status.task_marker(), item.text);
+        }
+        Cmd::Field { note, line, key, value } => {
+            let id = resolve(&vault, &note)?;
+            let item = vault.set_item_field(&id, line, &key, &value)?;
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&item)?);
+            } else {
+                println!("{}:{}\t{}", item.note_id, item.line, item.raw);
+            }
         }
         Cmd::Answer { note, line, answer } => {
             let id = resolve(&vault, &note)?;

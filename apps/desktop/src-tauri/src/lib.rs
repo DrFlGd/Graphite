@@ -175,6 +175,11 @@ fn set_item_status(state: State<AppState>, note_id: String, line: usize, status:
 }
 
 #[tauri::command]
+fn set_item_field(state: State<AppState>, note_id: String, line: usize, key: String, value: String) -> CmdResult<Item> {
+    with_vault(&state, |v| v.set_item_field(&note_id, line, &key, &value))
+}
+
+#[tauri::command]
 fn answer_gap(state: State<AppState>, note_id: String, line: usize, answer: String) -> CmdResult<Item> {
     with_vault(&state, |v| v.answer_gap(&note_id, line, &answer))
 }
@@ -366,6 +371,7 @@ pub fn run() {
             items,
             progress,
             set_item_status,
+            set_item_field,
             answer_gap,
             add_item,
             query,

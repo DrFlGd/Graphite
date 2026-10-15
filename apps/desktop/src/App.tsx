@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
-import { CalendarDays, Columns2, FilePlus2, FolderOpen, Inbox, Locate, RefreshCw, Search, Trash2, Waypoints, X, Zap } from 'lucide-react'
+import { CalendarDays, Columns2, FilePlus2, FolderOpen, Inbox, ListChecks, Locate, RefreshCw, Search, SquareKanban, Trash2, Waypoints, X, Zap } from 'lucide-react'
 import { insertAttachments, type AttachmentItem, type Editor } from '@graphite/ui'
 import { api, assetUrl, INBOX_DIR, type Note, type NoteSummary, type VaultInfo } from './api'
 import { Sidebar } from './components/Sidebar'
 import { NoteTab } from './components/NoteTab'
 import { Pane } from './components/Pane'
 import { InboxView } from './components/InboxView'
+import { TasksView } from './components/TasksView'
+import { SavedQueryTab } from './components/SavedQueryTab'
+import type { ViewKind } from './components/QueryView'
 import { ContextPanel } from './components/ContextPanel'
 import { GraphView, type GraphMode } from './components/GraphView'
 import { Palette, type Command, type PaletteMode } from './components/Palette'
@@ -32,6 +35,10 @@ export function App() {
   const [version, setVersion] = useState(0)
   const [changed, setChanged] = useState<{ ids: string[]; seq: number }>({ ids: [], seq: 0 })
   const [saved, setSaved] = useState<Note | null>(null)
+  /** Open tasks across the vault, for the sidebar badge. */
+  const [openTasks, setOpenTasks] = useState(0)
+  /** Query notes the user chose to see as text rather than as results. */
+  const [editingQueries, setEditingQueries] = useState<Set<string>>(() => new Set())
   const activeEditor = useRef<Editor | null>(null)
   const layoutRef = useRef(layout)
   layoutRef.current = layout
@@ -112,6 +119,22 @@ export function App() {
   }, [])
 
   const openInbox = useCallback((newTab = false) => setLayout((l) => L.open(l, { kind: 'inbox' }, newTab)), [])
+  const openTasksView = useCallback((newTab = false) => setLayout((l) => L.open(l, { kind: 'tasks' }, newTab)), [])
+
+  // Keep the open-task count fresh whenever the index changes.
+  useEffect(() => {
+    if (!vault) return
+    let cancelled = false
+    void api
+      .items({ kind: 'task', open_only: true })
+      .then((rows) => {
+        if (!cancelled) setOpenTasks(rows.length)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [vault, version])
 
   const showGraph = useCallback((mode: GraphMode, newTab = false) => {
     setGraphMode(mode)
@@ -138,6 +161,23 @@ export function App() {
       } catch (e) {
         setError(String(e))
         return null
+      }
+    },
+    [openNote, refreshList],
+  )
+
+  /** Turn a query into a `type: query` note and open it. */
+  const saveQuery = useCallback(
+    async (query: string, view: ViewKind) => {
+      const title = window.prompt('Name for this saved query', 'Saved query')
+      if (!title?.trim()) return
+      try {
+        const note = await api.createFromTemplate(title.trim(), 'query')
+        await api.saveNote({ ...note, properties: { ...note.properties, query, view } })
+        await refreshList()
+        openNote(note.id)
+      } catch (e) {
+        setError(String(e))
       }
     },
     [openNote, refreshList],
@@ -258,6 +298,7 @@ export function App() {
       if (e.shiftKey) {
         if (key === 'p') act(() => setPalette({ mode: 'commands', newTab: false }))
         else if (key === 'g') act(() => showGraph(lastNote && active.kind !== 'graph' ? 'local' : 'global'))
+        else if (key === 't') act(() => openTasksView())
         else if (key === 'tab') act(() => setLayout((l) => L.cycleTab(l, -1)))
         return
       }
@@ -272,7 +313,7 @@ export function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [createNote, openToday, showGraph, lastNote, active.kind])
+  }, [createNote, openToday, showGraph, openTasksView, lastNote, active.kind])
 
   const commands = useMemo<Command[]>(
     () => [
@@ -280,6 +321,8 @@ export function App() {
       { id: 'new', label: 'New note', shortcut: 'Ctrl+N', icon: <FilePlus2 size={16} />, run: () => void createNote(`Untitled ${new Date().toLocaleString()}`) },
       { id: 'today', label: "Open today's daily note", shortcut: 'Ctrl+D', icon: <CalendarDays size={16} />, keywords: 'daily journal', run: () => void openToday() },
       { id: 'inbox', label: 'Show inbox', icon: <Inbox size={16} />, keywords: 'triage captures', run: () => openInbox() },
+      { id: 'tasks', label: 'Show tasks', shortcut: 'Ctrl+Shift+T', icon: <ListChecks size={16} />, keywords: 'todo tracker gaps questions board', run: () => openTasksView() },
+      { id: 'query', label: 'New saved query', icon: <SquareKanban size={16} />, keywords: 'view list table board filter', run: () => void saveQuery('type:task status:open sort:due', 'list') },
       { id: 'graph', label: 'Show graph of the whole vault', shortcut: 'Ctrl+Shift+G', icon: <Waypoints size={16} />, keywords: 'links network', run: () => showGraph('global') },
       ...(lastNote ? [{ id: 'graph-local', label: `Show graph around “${lastNote.title}”`, icon: <Locate size={16} />, keywords: 'local links', run: () => showGraph('local') }] : []),
       { id: 'tab-new', label: 'Open a note in a new tab', shortcut: 'Ctrl+T', keywords: 'tab', run: () => setPalette({ mode: 'notes', newTab: true }) },
@@ -290,7 +333,7 @@ export function App() {
       { id: 'vault', label: 'Open another vault folder', icon: <FolderOpen size={16} />, keywords: 'switch', run: () => void pickVault() },
       { id: 'reindex', label: 'Rebuild the search index', icon: <RefreshCw size={16} />, keywords: 'reindex repair', run: () => void api.rebuildIndex().then(refreshList).catch((e) => setError(String(e))) },
     ],
-    [createNote, openToday, openInbox, showGraph, lastNote, activeNote, deleteNote, pickVault, refreshList],
+    [createNote, openToday, openInbox, openTasksView, saveQuery, showGraph, lastNote, activeNote, deleteNote, pickVault, refreshList],
   )
 
   if (!vault) return <Welcome onPick={pickVault} error={error} />
@@ -301,6 +344,19 @@ export function App() {
   const body = (tab: L.Tab, isActive: boolean) => {
     switch (tab.kind) {
       case 'note':
+        if (notes.find((n) => n.id === tab.noteId)?.type === 'query' && !editingQueries.has(tab.noteId)) {
+          return (
+            <SavedQueryTab
+              key={tab.id}
+              noteId={tab.noteId}
+              version={version}
+              onOpen={openNote}
+              onChanged={() => void refreshList()}
+              onError={setError}
+              onEdit={() => setEditingQueries((s) => new Set(s).add(tab.noteId))}
+            />
+          )
+        }
         return (
           <NoteTab
             key={tab.id}
@@ -328,6 +384,8 @@ export function App() {
         )
       case 'inbox':
         return <InboxView key={tab.id} notes={notes} onOpen={(id) => openNote(id)} onChanged={() => void refreshList()} onError={setError} />
+      case 'tasks':
+        return <TasksView key={tab.id} notes={notes} version={version} onOpen={openNote} onChanged={() => void refreshList()} onError={setError} onSaveQuery={(q, v) => void saveQuery(q, v)} />
       case 'graph':
         return <GraphView key={tab.id} current={lastNote} mode={graphMode} onModeChange={setGraphMode} version={version} onOpen={(id) => openNote(id)} onCreate={(t) => void followLink(t)} onError={setError} />
       default:
@@ -356,9 +414,12 @@ export function App() {
         inboxCount={inboxCount}
         inboxOpen={active.kind === 'inbox'}
         graphOpen={active.kind === 'graph'}
+        tasksOpen={active.kind === 'tasks'}
+        openTasks={openTasks}
         onInbox={() => openInbox()}
         onToday={() => void openToday()}
         onGraph={() => showGraph(graphMode)}
+        onTasks={() => openTasksView()}
       />
       <main className="panes">
         {layout.panes.map((pane, pi) => {
