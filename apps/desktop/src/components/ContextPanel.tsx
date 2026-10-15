@@ -109,52 +109,48 @@ function PropertyEditor({ note, onEdit }: { note: Note; onEdit: Props['onEdit'] 
     onEdit({ properties: { ...note.properties, [k]: '' } })
     setNewKey('')
   }
+  const when = (iso: string) => new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
   return (
-    <dl className="context__props">
-      <dt>type</dt>
-      <dd>
-        <Cell value={note.type} onCommit={(v) => onEdit({ type: v || 'note' })} />
-      </dd>
-      <dt>aliases</dt>
-      <dd>
-        <Cell value={note.aliases.join(', ')} placeholder="comma separated" onCommit={(v) => onEdit({ aliases: v.split(',').map((x) => x.trim()).filter(Boolean) })} />
-      </dd>
-      {props.map(([k, v]) => (
-        <Fragment key={k}>
-          <dt>
-            <span>{k}</span>
-            <button type="button" className="context__remove" title={`Remove ${k}`} onClick={() => setProp(k, '')}>
-              <X size={11} />
-            </button>
-          </dt>
-          <dd>
-            <Cell value={typeof v === 'string' ? v : Array.isArray(v) ? v.map(String).join(', ') : JSON.stringify(v)} onCommit={(t) => setProp(k, t)} />
-          </dd>
-        </Fragment>
-      ))}
-      <dt>
-        <input className="context__cell context__newkey" value={newKey} onChange={(e) => setNewKey(e.target.value)} placeholder="new property" aria-label="New property name" onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addKey())} />
-      </dt>
-      <dd>
-        <button type="button" className="icon-btn" title="Add property" disabled={!newKey.trim()} onClick={addKey}>
-          <Plus size={13} />
-        </button>
-      </dd>
-      <dt>id</dt>
-      <dd className="mono">{note.id}</dd>
-      {note.created && (
-        <>
-          <dt>created</dt>
-          <dd>{new Date(note.created).toLocaleString()}</dd>
-        </>
-      )}
-      {note.updated && (
-        <>
-          <dt>updated</dt>
-          <dd>{new Date(note.updated).toLocaleString()}</dd>
-        </>
-      )}
-    </dl>
+    <>
+      <dl className="context__props">
+        <dt>type</dt>
+        <dd>
+          <Cell value={note.type} onCommit={(v) => onEdit({ type: v || 'note' })} />
+        </dd>
+        <dt>aliases</dt>
+        <dd>
+          <Cell value={note.aliases.join(', ')} placeholder="comma separated" onCommit={(v) => onEdit({ aliases: v.split(',').map((x) => x.trim()).filter(Boolean) })} />
+        </dd>
+        {props.map(([k, v]) => (
+          <Fragment key={k}>
+            <dt>
+              <span className="context__key" title={k}>
+                {k}
+              </span>
+              <button type="button" className="context__remove" title={`Remove ${k}`} onClick={() => setProp(k, '')}>
+                <X size={11} />
+              </button>
+            </dt>
+            <dd>
+              <Cell value={typeof v === 'string' ? v : Array.isArray(v) ? v.map(String).join(', ') : JSON.stringify(v)} onCommit={(t) => setProp(k, t)} />
+            </dd>
+          </Fragment>
+        ))}
+        <dt>
+          <input className="context__cell context__newkey" value={newKey} onChange={(e) => setNewKey(e.target.value)} placeholder="new property" aria-label="New property name" onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addKey())} />
+        </dt>
+        <dd>
+          <button type="button" className="icon-btn" title="Add property" disabled={!newKey.trim()} onClick={addKey}>
+            <Plus size={13} />
+          </button>
+        </dd>
+      </dl>
+      <div className="context__meta">
+        {note.created && <span>Created {when(note.created)}</span>}
+        {note.updated && <span>Updated {when(note.updated)}</span>}
+        <span className="mono" title="Note id">{note.id}</span>
+      </div>
+    </>
   )
 }
 
@@ -169,6 +165,7 @@ function Cell({ value, placeholder, onCommit }: { value: string; placeholder?: s
     <input
       className="context__cell"
       value={draft}
+      title={value || undefined}
       placeholder={placeholder}
       aria-label="Value"
       onChange={(e) => setDraft(e.target.value)}

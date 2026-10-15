@@ -77,8 +77,6 @@ export function Sidebar({ vault, notes, currentId, onOpen, onCreate, onCreateFro
         <button type="button" className={`sidebar__nav-btn ${graphOpen ? 'is-current' : ''}`} onClick={onGraph} title="Link graph (Ctrl+Shift+G)">
           <Waypoints size={14} /> Graph
         </button>
-      </div>
-      <div className="sidebar__nav">
         <button type="button" className={`sidebar__nav-btn ${tasksOpen ? 'is-current' : ''}`} onClick={onTasks} title="Every open task in the vault (Ctrl+Shift+T)">
           <ListChecks size={14} /> Tasks
           {openTasks > 0 && <span className="sidebar__count sidebar__count--quiet">{openTasks}</span>}

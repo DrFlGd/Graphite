@@ -15,6 +15,8 @@
   --gr-code-bg: #f3f3f1;
   --gr-radius: 6px;
   --gr-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
+  /* Native checkboxes, selects, date fields and scrollbars follow the theme. */
+  color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -30,6 +32,7 @@
     --gr-link: #8fb0ff;
     --gr-code-bg: #26272c;
     --gr-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+    color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
@@ -44,6 +47,7 @@
   --gr-link: #8fb0ff;
   --gr-code-bg: #26272c;
   --gr-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+  color-scheme: dark;
 }
 
 /* Editor shell */
@@ -51,8 +55,8 @@
 .gr-editor__content { flex: 1; overflow: auto; padding: 8px 28px 48px; }
 
 /* Toolbar */
-.gr-toolbar { display: flex; flex-wrap: wrap; gap: 2px 10px; padding: 6px 16px; border-bottom: 1px solid var(--gr-border); background: var(--gr-bg-elev); position: sticky; top: 0; z-index: 2; }
-.gr-toolbar__group { display: flex; gap: 2px; }
+.gr-toolbar { display: flex; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; gap: 2px 10px; padding: 6px 16px; border-bottom: 1px solid var(--gr-border); background: var(--gr-bg-elev); position: sticky; top: 0; z-index: 2; }
+.gr-toolbar__group { display: flex; flex: none; gap: 2px; }
 .gr-toolbar__trailing { margin-left: auto; }
 .gr-tool { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border: 0; border-radius: var(--gr-radius); background: transparent; color: var(--gr-fg-muted); cursor: pointer; }
 .gr-tool:hover:not(:disabled) { background: var(--gr-bg-subtle); color: var(--gr-fg); }
@@ -76,6 +80,8 @@
 .gr-prose hr { border: 0; border-top: 1px solid var(--gr-border); margin: 1.4em 0; }
 .gr-prose ul, .gr-prose ol { padding-left: 1.5em; }
 .gr-prose li + li { margin-top: 0.2em; }
+/* List items hold a paragraph; without this each item gets a full paragraph gap and task boxes sit above their text. */
+.gr-prose li > p, .gr-prose li > div > p { margin-top: 0; margin-bottom: 0; }
 .gr-prose img { max-width: 100%; height: auto; border-radius: var(--gr-radius); display: block; }
 .gr-prose img.ProseMirror-selectednode { outline: 2px solid var(--gr-accent); }
 
