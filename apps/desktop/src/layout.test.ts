@@ -16,6 +16,15 @@ describe('layout', () => {
     expect(activeTab(l)).toMatchObject({ noteId: 'c' })
   })
 
+  it('has one tasks tab per pane and keeps it across a reload', () => {
+    let l = open(emptyLayout(), { kind: 'tasks' })
+    l = open(l, { kind: 'tasks' }, true)
+    expect(l.panes[0].tabs.filter((t) => t.kind === 'tasks')).toHaveLength(1)
+    const parsed = parseLayout(JSON.parse(JSON.stringify(l)))
+    expect(parsed && activeTab(parsed).kind).toBe('tasks')
+    expect(parseLayout({ panes: [{ id: 'p', tabs: [{ id: 't', kind: 'bogus' }], active: 0 }], active: 0 })?.panes[0].tabs[0].kind).toBe('empty')
+  })
+
   it('focuses an existing tab instead of opening the note twice', () => {
     let l = open(open(emptyLayout(), note('a')), note('b'), true)
     l = open(l, note('a'), true)

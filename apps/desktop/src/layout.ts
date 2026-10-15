@@ -1,7 +1,7 @@
 // Tabs and split panes: a pure model the app renders and the tests check.
 
 /** What a tab shows. */
-export type TabSpec = { kind: 'note'; noteId: string } | { kind: 'inbox' } | { kind: 'graph' } | { kind: 'empty' }
+export type TabSpec = { kind: 'note'; noteId: string } | { kind: 'inbox' } | { kind: 'graph' } | { kind: 'tasks' } | { kind: 'empty' }
 export type Tab = TabSpec & { id: string }
 
 export interface Pane {
@@ -131,7 +131,7 @@ export function parseLayout(raw: unknown): Layout | null {
   const panes: Pane[] = []
   for (const p of l.panes) {
     if (!p || !Array.isArray(p.tabs)) return null
-    const tabs = p.tabs.filter((t: Tab) => t && typeof t.id === 'string' && (t.kind === 'empty' || t.kind === 'inbox' || t.kind === 'graph' || (t.kind === 'note' && typeof t.noteId === 'string')))
+    const tabs = p.tabs.filter((t: Tab) => t && typeof t.id === 'string' && (t.kind === 'empty' || t.kind === 'inbox' || t.kind === 'graph' || t.kind === 'tasks' || (t.kind === 'note' && typeof t.noteId === 'string')))
     if (tabs.length === 0) tabs.push(emptyTab())
     panes.push({ id: typeof p.id === 'string' ? p.id : newId(), tabs, active: Math.min(Math.max(0, Number(p.active) || 0), tabs.length - 1) })
   }

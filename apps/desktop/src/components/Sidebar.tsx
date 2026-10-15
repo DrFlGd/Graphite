@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { CalendarDays, FilePlus2, FolderOpen, Inbox, Search, Waypoints } from 'lucide-react'
+import { CalendarDays, FilePlus2, FolderOpen, Inbox, ListChecks, Search, Waypoints } from 'lucide-react'
 import type { NoteSummary, VaultInfo } from '../api'
 
 interface Props {
@@ -14,12 +14,15 @@ interface Props {
   inboxCount: number
   inboxOpen: boolean
   graphOpen: boolean
+  tasksOpen: boolean
+  openTasks: number
   onInbox: () => void
   onToday: () => void
   onGraph: () => void
+  onTasks: () => void
 }
 
-export function Sidebar({ vault, notes, currentId, onOpen, onCreate, onPickVault, onSearch, inboxCount, inboxOpen, graphOpen, onInbox, onToday, onGraph }: Props) {
+export function Sidebar({ vault, notes, currentId, onOpen, onCreate, onPickVault, onSearch, inboxCount, inboxOpen, graphOpen, tasksOpen, openTasks, onInbox, onToday, onGraph, onTasks }: Props) {
   const [filter, setFilter] = useState('')
   const [newTitle, setNewTitle] = useState('')
 
@@ -61,6 +64,12 @@ export function Sidebar({ vault, notes, currentId, onOpen, onCreate, onPickVault
         </button>
         <button type="button" className={`sidebar__nav-btn ${graphOpen ? 'is-current' : ''}`} onClick={onGraph} title="Link graph (Ctrl+Shift+G)">
           <Waypoints size={14} /> Graph
+        </button>
+      </div>
+      <div className="sidebar__nav">
+        <button type="button" className={`sidebar__nav-btn ${tasksOpen ? 'is-current' : ''}`} onClick={onTasks} title="Every open task in the vault (Ctrl+Shift+T)">
+          <ListChecks size={14} /> Tasks
+          {openTasks > 0 && <span className="sidebar__count sidebar__count--quiet">{openTasks}</span>}
         </button>
       </div>
       <form

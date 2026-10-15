@@ -338,6 +338,66 @@ pub fn append_field(body: &str, line: usize, key: &str, value: &str) -> Option<S
     Some(lines.concat())
 }
 
+/// Set an inline field on the item on `line`: replaces the value when the
+/// field is there, appends it otherwise, and removes the field when `value`
+/// is empty. The rest of the line is left exactly as written.
+pub fn set_field(body: &str, line: usize, key: &str, value: &str) -> Option<String> {
+    let key = key.trim().to_lowercase();
+    let value = value.trim();
+    let mut lines: Vec<String> = body.split_inclusive('\n').map(str::to_string).collect();
+    let target = lines.get_mut(line)?;
+    let content_len = target.trim_end_matches(['\r', '\n']).len();
+    let content = target[..content_len].to_string();
+    let ending = target[content_len..].to_string();
+    let cap = item_re().captures(&content)?;
+    let rest = cap.name("rest").unwrap();
+    let rest_text = rest.as_str();
+    let marks: Vec<(usize, usize, usize, String)> = field_re()
+        .captures_iter(rest_text)
+        .map(|c| {
+            let k = c.name("key").unwrap();
+            let whole = c.get(0).unwrap();
+            (whole.start(), k.start(), whole.end(), k.as_str().to_lowercase())
+        })
+        .collect();
+    let found = marks.iter().position(|m| m.3 == key);
+    let new_rest = match found {
+        Some(i) => {
+            let (seg_start, _, value_start, _) = marks[i];
+            let mut value_end = marks.get(i + 1).map(|m| m.1).unwrap_or(rest_text.len());
+            if let Some(m) = tag_re().find(&rest_text[value_start..value_end]) {
+                value_end = value_start + m.start();
+            }
+            let old_value_len = rest_text[value_start..value_end].trim_end().len();
+            let value_end = value_start + old_value_len;
+            if value.is_empty() {
+                // Drop ` key:: value` and one of the surrounding spaces.
+                let before = rest_text[..seg_start].trim_end();
+                let after = rest_text[value_end..].trim_start();
+                if before.is_empty() {
+                    after.to_string()
+                } else if after.is_empty() {
+                    before.to_string()
+                } else {
+                    format!("{before} {after}")
+                }
+            } else {
+                format!("{}{}{}", &rest_text[..value_start], value, &rest_text[value_end..])
+            }
+        }
+        None if value.is_empty() => return Some(body.to_string()),
+        None => format!("{} {key}:: {value}", rest_text.trim_end()),
+    };
+    *target = format!(
+        "{}{}{}{}",
+        &content[..rest.start()],
+        new_rest,
+        &content[rest.end()..],
+        ending
+    );
+    Some(lines.concat())
+}
+
 /// Add a task or gap line to `body`: under the `## Tasks` heading (or
 /// `## Open questions` for gaps) when the note has one, else at the end.
 /// Returns the new body and the line the item landed on.
@@ -507,6 +567,32 @@ mod tests {
         let items = parse_items("N", &body);
         assert_eq!(items[2].status, ItemStatus::Answered);
         assert_eq!(items[2].answer.as_deref(), Some("Pump spec"));
+    }
+
+    #[test]
+    fn sets_replaces_and_removes_fields() {
+        let body = "- [ ] Order motors due:: 2026-11-01 #p1\n- [ ] Plain\n";
+        let b = set_field(body, 0, "due", "2026-12-01").unwrap();
+        assert_eq!(b, "- [ ] Order motors due:: 2026-12-01 #p1\n- [ ] Plain\n");
+        let b = set_field(&b, 0, "priority", "p2").unwrap();
+        assert_eq!(
+            b,
+            "- [ ] Order motors due:: 2026-12-01 #p1 priority:: p2\n- [ ] Plain\n"
+        );
+        let b = set_field(&b, 0, "due", "").unwrap();
+        assert_eq!(b, "- [ ] Order motors #p1 priority:: p2\n- [ ] Plain\n");
+        let b = set_field(&b, 0, "priority", "").unwrap();
+        assert_eq!(b, "- [ ] Order motors #p1\n- [ ] Plain\n");
+        let b = set_field(&b, 1, "project", "[[Garden Robot]]").unwrap();
+        assert_eq!(b, "- [ ] Order motors #p1\n- [ ] Plain project:: [[Garden Robot]]\n");
+        let b = set_field(&b, 1, "project", "").unwrap();
+        assert_eq!(b, "- [ ] Order motors #p1\n- [ ] Plain\n");
+        let items = parse_items("n", "- [ ] A due:: 2026-01-01 project:: [[X]]\n");
+        assert_eq!(items[0].due.as_deref(), Some("2026-01-01"));
+        let b = set_field("- [ ] A due:: 2026-01-01 project:: [[X]]\n", 0, "due", "2026-02-02").unwrap();
+        assert_eq!(b, "- [ ] A due:: 2026-02-02 project:: [[X]]\n");
+        assert!(set_field(body, 5, "due", "x").is_none());
+        assert!(set_field("plain text\n", 0, "due", "x").is_none());
     }
 
     #[test]

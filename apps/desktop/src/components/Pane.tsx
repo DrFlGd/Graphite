@@ -1,5 +1,5 @@
 import type { MouseEvent, ReactNode } from 'react'
-import { Columns2, FileText, Inbox, Plus, Waypoints, X } from 'lucide-react'
+import { Columns2, FileText, Inbox, ListChecks, Plus, Waypoints, X } from 'lucide-react'
 import type { NoteSummary } from '../api'
 import type { Pane as PaneModel, Tab } from '../layout'
 
@@ -24,6 +24,8 @@ export function tabTitle(tab: Tab, notes: NoteSummary[]): string {
       return 'Inbox'
     case 'graph':
       return 'Graph'
+    case 'tasks':
+      return 'Tasks'
     default:
       return 'New tab'
   }
@@ -31,7 +33,7 @@ export function tabTitle(tab: Tab, notes: NoteSummary[]): string {
 
 /** A column of tabs with one body: notes, the inbox or the graph. */
 export function Pane({ pane, active, notes, canSplit, onFocus, onSelect, onClose, onNewTab, onSplit, children }: Props) {
-  const icon = (t: Tab) => (t.kind === 'inbox' ? <Inbox size={13} /> : t.kind === 'graph' ? <Waypoints size={13} /> : t.kind === 'note' ? <FileText size={13} /> : null)
+  const icon = (t: Tab) => (t.kind === 'inbox' ? <Inbox size={13} /> : t.kind === 'graph' ? <Waypoints size={13} /> : t.kind === 'tasks' ? <ListChecks size={13} /> : t.kind === 'note' ? <FileText size={13} /> : null)
   const middleClick = (e: MouseEvent, ti: number) => {
     if (e.button === 1) {
       e.preventDefault()

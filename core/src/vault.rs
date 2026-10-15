@@ -323,6 +323,19 @@ impl Vault {
         self.item_at(&note, line)
     }
 
+    /// Set (or, with an empty value, remove) an inline field such as `due`
+    /// or `priority` on one item line.
+    pub fn set_item_field(&mut self, note_id: &str, line: usize, key: &str, value: &str) -> Result<Item> {
+        let mut note = self.read(note_id)?;
+        self.item_at(&note, line)?;
+        note.body = tasks::set_field(&note.body, line, key, value).ok_or_else(|| Error::NotAnItem {
+            note: note_id.into(),
+            line,
+        })?;
+        let note = self.write(&note)?;
+        self.item_at(&note, line)
+    }
+
     /// Add a task or gap to a note (under its `## Tasks` / `## Open questions`
     /// heading when it has one, else at the end).
     pub fn add_item(&mut self, note_id: &str, kind: ItemKind, text: &str) -> Result<Item> {
