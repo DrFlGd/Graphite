@@ -16,6 +16,8 @@ pub enum Error {
     NotAnItem { note: String, line: usize },
     #[error("path escapes the vault: {0}")]
     PathEscapesVault(PathBuf),
+    #[error("sync: {0}")]
+    Sync(String),
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]

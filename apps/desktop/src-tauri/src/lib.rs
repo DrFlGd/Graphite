@@ -8,8 +8,8 @@ use std::sync::Mutex;
 
 use graphite_core::{
     Asset, AssetHit, AssetKind, Backlink, Graph, ImportOptions, ImportReport, Item, ItemFilter, ItemKind, ItemRow,
-    ItemStatus, Note, NoteSummary, Progress, ProjectHub, QueryResult, SearchHit, SourceKind, SourceRow, Template,
-    Tools, UpdateCheck, Vault, VaultInfo, Watcher,
+    ItemStatus, Note, NoteSummary, Progress, ProjectHub, QueryResult, SearchHit, SourceKind, SourceRow, SyncReport,
+    SyncStatus, Template, Tools, UpdateCheck, Vault, VaultInfo, Watcher,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -20,6 +20,77 @@ struct AppState {
     watcher: Mutex<Option<Watcher>>,
     /// Whether the background thread deriving asset previews is running.
     deriving: AtomicBool,
+    /// Whether a sync pass is running (a second request waits for the next one).
+    syncing: AtomicBool,
+    /// Whether the periodic sync thread has been started.
+    sync_timer: AtomicBool,
+}
+
+/// Payload of the `sync://done` event, sent after every automatic pass.
+#[derive(Serialize, Clone)]
+struct SyncPayload {
+    report: SyncReport,
+    status: SyncStatus,
+}
+
+/// One sync pass, if sync is on for the open vault. Tells the UI which
+/// notes changed and how the pass went.
+fn run_sync(app: &AppHandle) -> Option<SyncReport> {
+    let state = app.state::<AppState>();
+    if state.syncing.swap(true, Ordering::SeqCst) {
+        return None;
+    }
+    let outcome = (|| {
+        let mut guard = state.vault.lock().ok()?;
+        let vault = guard.as_mut()?;
+        if !vault.sync_enabled() {
+            return None;
+        }
+        match vault.sync_now() {
+            Ok(report) => Some((report, vault.sync_status().ok())),
+            Err(e) => {
+                tracing::warn!("sync: {e}");
+                None
+            }
+        }
+    })();
+    state.syncing.store(false, Ordering::SeqCst);
+    let (report, status) = outcome?;
+    let mut ids = report.pulled.clone();
+    ids.extend(report.deleted.iter().cloned());
+    if !ids.is_empty() {
+        let _ = app.emit(
+            "vault://changed",
+            ChangedPayload {
+                ids,
+                assets: Vec::new(),
+            },
+        );
+    }
+    if let Some(status) = status {
+        let _ = app.emit(
+            "sync://done",
+            SyncPayload {
+                report: report.clone(),
+                status,
+            },
+        );
+    }
+    Some(report)
+}
+
+/// Sync every minute while the app runs, so edits made on other devices
+/// show up even when the file watcher misses the sync client's writes.
+fn start_sync_timer(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    if state.sync_timer.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let handle = app.clone();
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_secs(60));
+        run_sync(&handle);
+    });
 }
 
 type CmdResult<T> = Result<T, String>;
@@ -98,19 +169,31 @@ fn open_vault(app: AppHandle, state: State<AppState>, path: String) -> CmdResult
     let vault = Vault::open(&root).map_err(err)?;
     let info = vault.info().map_err(err)?;
     let root = vault.root().to_path_buf();
+    let device_id = vault.device().id.clone();
     // Let the webview load images and other attachments from this vault via the asset protocol.
     app.asset_protocol_scope().allow_directory(&root, true).map_err(err)?;
     *state.vault.lock().map_err(err)? = Some(vault);
 
-    // External edits: reindex the touched files and tell the UI which notes changed.
+    // External edits: reindex the touched files and tell the UI which notes
+    // changed. Documents arriving from other devices trigger a sync pass.
     let handle = app.clone();
+    let state_dir = root.join(graphite_core::vault::STATE_DIR);
+    let own_sync_dir = state_dir.join(graphite_core::sync::SYNC_DIR).join(&device_id);
     let watcher = Watcher::new(&root, move |ev| {
         let state = handle.state::<AppState>();
         let mut ids = Vec::new();
         let mut assets = Vec::new();
+        let mut sync_needed = false;
         if let Ok(mut guard) = state.vault.lock() {
             if let Some(vault) = guard.as_mut() {
                 for p in &ev.paths {
+                    if graphite_core::is_sync_document(&state_dir, p) {
+                        sync_needed |= !p.starts_with(&own_sync_dir);
+                        continue;
+                    }
+                    // A note changed by the user or the sync client: the
+                    // next pass records or merges it.
+                    sync_needed |= p.extension().and_then(|e| e.to_str()) == Some("md");
                     if p.is_dir() {
                         let _ = vault.sync();
                         continue;
@@ -130,15 +213,57 @@ fn open_vault(app: AppHandle, state: State<AppState>, path: String) -> CmdResult
             }
         }
         let changed_assets = !assets.is_empty();
-        let _ = handle.emit("vault://changed", ChangedPayload { ids, assets });
+        if !ids.is_empty() || changed_assets {
+            let _ = handle.emit("vault://changed", ChangedPayload { ids, assets });
+        }
         if changed_assets {
             start_deriver(&handle);
+        }
+        if sync_needed {
+            let h = handle.clone();
+            std::thread::spawn(move || run_sync(&h));
         }
     })
     .map_err(err)?;
     *state.watcher.lock().map_err(err)? = Some(watcher);
     start_deriver(&app);
+    let h = app.clone();
+    std::thread::spawn(move || run_sync(&h));
+    start_sync_timer(&app);
     Ok(info)
+}
+
+/// Run a sync pass now (turning sync on for this vault if it was off).
+#[tauri::command]
+async fn sync_now(app: AppHandle) -> CmdResult<SyncReport> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        {
+            let mut guard = state.vault.lock().map_err(err)?;
+            let vault = guard.as_mut().ok_or_else(|| "no vault open".to_string())?;
+            if !vault.sync_enabled() {
+                // First pass: create the sync folder so later passes run.
+                std::fs::create_dir_all(vault.sync_dir()).map_err(err)?;
+            }
+        }
+        // Wait for a pass already running rather than skipping.
+        loop {
+            if let Some(report) = run_sync(&app) {
+                return Ok(report);
+            }
+            if !state.syncing.load(Ordering::SeqCst) {
+                return Err("sync did not run".to_string());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    })
+    .await
+    .map_err(err)?
+}
+
+#[tauri::command]
+fn sync_status(state: State<AppState>) -> CmdResult<SyncStatus> {
+    with_vault(&state, |v| v.sync_status())
 }
 
 #[tauri::command]
@@ -620,6 +745,8 @@ pub fn run() {
             check_source,
             check_all_sources,
             classify_url,
+            sync_now,
+            sync_status,
             attach_file,
             attach_data,
             capture,

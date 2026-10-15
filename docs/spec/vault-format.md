@@ -128,6 +128,20 @@ Anything imported from a URL becomes a **source**: a note with `type: source` un
 
 The note body starts with `# Title`, then `source:: <url>` and `project:: [[Title]]` as inline fields, then what the importer produced: a repository's README, a page's readable text with a link to the archived `page.html` and `screenshot.png`, an embedded video or PDF. Files in the folder are ordinary assets, so they get previews and their text is searchable. The whole of `attachments/sources/` is content, never cache: deleting the `.graphite/` folder loses nothing.
 
+### Sync (M4)
+
+Sync is between **devices** sharing one vault folder through any file-sync client (Dropbox, Syncthing, OneDrive, a USB stick); nothing in the format depends on which. Each device has a stable id (32 hex characters, stored outside the vault in the OS config directory, or given by `GRAPHITE_DEVICE_ID`) and keeps everything it knows under `.graphite/sync/<device-id>/`:
+
+- `<note-id>.automerge` — the note's history as an [Automerge](https://automerge.org) document: `path`, `title`, `type`, `tags` and `aliases` (as JSON), `created`, `updated`, a `props` map (user properties as JSON strings), the `body` as collaborative text, and `state` (`live:<content hash>` or `deleted`). A device only ever writes its own folder and merges the others', so sync clients never see two writers on one file.
+- `seen.json` — per note, the content hashes this device wrote to disk or recorded from disk, newest last. A note file carrying one of these hashes came from a device's document, so it is merged rather than recorded again.
+- `device.json` — the device's name and when it last synced; what "Sync: 2 other devices" is built from.
+
+A **pass** (`graphite sync`, or the app on open, every minute and whenever files change) does, per note: merge the other devices' documents that changed since the last pass; record the note file if it changed and is not something a device already published (an edit through Graphite is recorded at once, one made by another program only once it has sat still for 20 s, so a note the sync client delivers ahead of its history is merged instead); fold in and remove any "conflicted copy" the sync client left next to the note; then write the merged note back if it differs, move it if its path changed, or delete it if it is tombstoned. A note deleted through Graphite becomes a tombstone on the next pass; a note file that simply vanished only after 60 s, so a rename in flight is not taken for a delete. An edit made at the same time as a delete on another device wins: the note comes back with the edit.
+
+Recorded edits are deterministic: the file's content is diffed against the document state the file was last reconciled at (or, for a file the sync client replaced, the closest recent state in the document's history), by an actor derived from that state and the content. Two devices that see the same file before each other's documents therefore produce the identical change, which merges as one. The content hash is over title, type, tags, aliases, created, updated, properties and body, never the path or front-matter formatting.
+
+What stays plain: the notes. Sync adds no markers to Markdown, and deleting `.graphite/sync/` on every device only forgets the shared history; the files are intact and the next pass starts over from them. Files under `.graphite/devices/` (each device's index) and `.graphite/derived/` may be excluded from the sync client; `.graphite/sync/` must be included.
+
 ### Captures and daily notes
 
 Quick capture (global shortcut, CLI `graphite capture`, phone share sheet in M4) writes a plain note; nothing about it is special beyond where it lands:
@@ -171,9 +185,9 @@ A **saved query** is a note with `type: query` and the query in a `query` proper
 
 New notes are written as `<folder>/<Title>.md`, with characters that are illegal on any supported OS replaced (`/ \ : * ? " < > | # ^ [ ]`) and whitespace collapsed. If the name is taken, creation fails (the UI asks for another title) rather than silently suffixing.
 
-## Index (`.graphite/index.sqlite`)
+## Index (`.graphite/devices/<device-id>/index.sqlite`)
 
-SQLite. Tables: `notes`, `tags`, `aliases`, `properties`, `links`, `items` (tasks and gaps), `assets`, and the FTS5 tables `notes_fts` and `assets_fts` (file names and extracted text). The schema version lives in `meta`; any mismatch triggers a rebuild. The index is kept current by mtime+size comparison on each sync and by a file watcher while an app is open.
+SQLite, one per device so machines sharing a vault folder never write the same database (before M4 it lived at `.graphite/index.sqlite`; a leftover there is deleted). Tables: `notes`, `tags`, `aliases`, `properties`, `links`, `items` (tasks and gaps), `assets`, the FTS5 tables `notes_fts` and `assets_fts` (file names and extracted text), and the sync bookkeeping `sync_notes` (per note: the content hash, path and document heads last reconciled, deletion and pending marks) and `sync_peers` (which versions of other devices' documents were merged). The schema version lives in `meta`; any mismatch triggers a rebuild. The index is kept current by mtime+size comparison on each sync and by a file watcher while an app is open.
 
 ## Identity and stability
 

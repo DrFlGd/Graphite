@@ -225,6 +225,31 @@ export interface LinkedNote extends NoteSummary {
   incoming: boolean
 }
 
+/** Result of one sync pass over the shared folder. */
+export interface SyncReport {
+  pushed: number
+  pulled: string[]
+  deleted: string[]
+  conflicts: number
+  pending: number
+  devices: number
+}
+
+export interface SyncDevice {
+  id: string
+  name: string
+  last_sync: string | null
+  notes: number
+  this_device: boolean
+}
+
+export interface SyncStatus {
+  enabled: boolean
+  device: { id: string; name: string }
+  devices: SyncDevice[]
+  last_sync: string | null
+}
+
 export interface ProjectHub {
   project: NoteSummary
   progress: Progress
@@ -300,6 +325,12 @@ export const api = {
   /** Check sources not checked in the last `maxAgeHours` (all when omitted). */
   checkAllSources: (maxAgeHours?: number) => invoke<UpdateCheck[]>('check_all_sources', { maxAgeHours: maxAgeHours ?? null }),
   classifyUrl: (url: string) => invoke<SourceKind>('classify_url', { url }),
+  /** Merge with the other devices now; turns sync on for the vault the first time. */
+  syncNow: () => invoke<SyncReport>('sync_now'),
+  syncStatus: () => invoke<SyncStatus>('sync_status'),
+  /** Fires after every automatic sync pass. */
+  onSyncDone: (cb: (report: SyncReport, status: SyncStatus) => void): Promise<UnlistenFn> =>
+    listen<{ report: SyncReport; status: SyncStatus }>('sync://done', (e) => cb(e.payload.report, e.payload.status)),
   /** Fires as previews and text are derived in the background; `pending` false when the queue is empty. */
   onAssetsDerived: (cb: (paths: string[], pending: boolean) => void): Promise<UnlistenFn> =>
     listen<{ paths: string[]; pending: boolean }>('assets://derived', (e) => cb(e.payload.paths, e.payload.pending)),

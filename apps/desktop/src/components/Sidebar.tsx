@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
-import { CalendarDays, Download, FilePlus2, FolderOpen, Inbox, LayoutTemplate, ListChecks, Paperclip, Search, Waypoints } from 'lucide-react'
-import type { NoteSummary, VaultInfo } from '../api'
+import { CalendarDays, Download, FilePlus2, FolderOpen, Inbox, LayoutTemplate, ListChecks, Paperclip, RefreshCw, Search, Waypoints } from 'lucide-react'
+import type { NoteSummary, SyncStatus, VaultInfo } from '../api'
+import { syncSummary } from './sync'
 
 interface Props {
   vault: VaultInfo
@@ -21,6 +22,9 @@ interface Props {
   openTasks: number
   /** Sources that changed upstream since they were fetched. */
   sourceUpdates: number
+  sync: SyncStatus | null
+  syncing: boolean
+  onSync: () => void
   onInbox: () => void
   onToday: () => void
   onGraph: () => void
@@ -29,7 +33,7 @@ interface Props {
   onSources: () => void
 }
 
-export function Sidebar({ vault, notes, currentId, onOpen, onCreate, onCreateFromTemplate, onPickVault, onSearch, inboxCount, inboxOpen, graphOpen, tasksOpen, filesOpen, sourcesOpen, openTasks, sourceUpdates, onInbox, onToday, onGraph, onTasks, onFiles, onSources }: Props) {
+export function Sidebar({ vault, notes, currentId, onOpen, onCreate, onCreateFromTemplate, onPickVault, onSearch, inboxCount, inboxOpen, graphOpen, tasksOpen, filesOpen, sourcesOpen, openTasks, sourceUpdates, sync, syncing, onSync, onInbox, onToday, onGraph, onTasks, onFiles, onSources }: Props) {
   const [filter, setFilter] = useState('')
   const [newTitle, setNewTitle] = useState('')
 
@@ -132,7 +136,19 @@ export function Sidebar({ vault, notes, currentId, onOpen, onCreate, onCreateFro
           </section>
         ))}
       </nav>
-      <div className="sidebar__footer">{vault.note_count === notes.length ? `${notes.length} notes` : `${notes.length} of ${vault.note_count} notes`}</div>
+      <div className="sidebar__footer">
+        <span>{vault.note_count === notes.length ? `${notes.length} notes` : `${notes.length} of ${vault.note_count} notes`}</span>
+        <button
+          type="button"
+          className={`sidebar__sync ${sync?.enabled ? 'is-on' : ''}`}
+          onClick={onSync}
+          disabled={syncing}
+          title={sync?.enabled ? 'Merge with the other devices sharing this folder now' : 'Turn on sync: other devices opening this folder will merge their edits with yours'}
+        >
+          <RefreshCw size={12} className={syncing ? 'is-spinning' : ''} />
+          <span>{syncing ? 'Syncing' : syncSummary(sync)}</span>
+        </button>
+      </div>
     </aside>
   )
 }

@@ -4,7 +4,7 @@ import { openUrl } from '@tauri-apps/plugin-opener'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { ArrowUpRight, CalendarDays, Columns2, Download, FilePlus2, FolderOpen, Inbox, LayoutTemplate, ListChecks, Locate, Paperclip, RefreshCw, Search, SquareKanban, Trash2, Waypoints, X, Zap } from 'lucide-react'
 import { insertAttachments, type AttachmentItem, type Editor } from '@graphite/ui'
-import { api, assetUrl, decodePath, INBOX_DIR, type Note, type NoteSummary, type VaultInfo } from './api'
+import { api, assetUrl, decodePath, INBOX_DIR, type Note, type NoteSummary, type SyncStatus, type VaultInfo } from './api'
 import { Sidebar } from './components/Sidebar'
 import { NoteTab } from './components/NoteTab'
 import { Pane } from './components/Pane'
@@ -53,6 +53,8 @@ export function App() {
   const [importing, setImporting] = useState<ImportRequest | null>(null)
   /** Sources flagged as changed upstream, for the sidebar badge. */
   const [sourceUpdates, setSourceUpdates] = useState(0)
+  const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null)
+  const [syncing, setSyncing] = useState(false)
   /** Front-matter edits from the context panel, for the note tab to save. */
   const [patch, setPatch] = useState<{ id: string; patch: Partial<Note>; seq: number } | null>(null)
   const activeEditor = useRef<Editor | null>(null)
@@ -177,6 +179,38 @@ export function App() {
       cancelled = true
     }
   }, [vault, version])
+
+  // Sync state: fetched on open and refreshed after every automatic pass.
+  useEffect(() => {
+    if (!vault) return
+    let cancelled = false
+    void api
+      .syncStatus()
+      .then((s) => {
+        if (!cancelled) setSyncStatus(s)
+      })
+      .catch(() => {})
+    const un = api.onSyncDone((_report, status) => {
+      if (!cancelled) setSyncStatus(status)
+    })
+    return () => {
+      cancelled = true
+      void un.then((f) => f())
+    }
+  }, [vault])
+
+  const syncNow = useCallback(async () => {
+    setSyncing(true)
+    try {
+      await api.syncNow()
+      setSyncStatus(await api.syncStatus())
+      await refreshList()
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setSyncing(false)
+    }
+  }, [refreshList])
 
   // The scheduled update check: once per vault open, sources not checked in the last day.
   useEffect(() => {
@@ -435,6 +469,7 @@ export function App() {
       { id: 'files', label: 'Show files', shortcut: 'Ctrl+Shift+F', icon: <Paperclip size={16} />, keywords: 'attachments images video pdf models gallery assets', run: () => openFiles() },
       { id: 'import', label: 'Import from URL…', shortcut: 'Ctrl+Shift+I', icon: <Download size={16} />, keywords: 'github repo clone web page article youtube video pdf source fetch', run: () => setImporting({}) },
       { id: 'sources', label: 'Show sources', icon: <Download size={16} />, keywords: 'imports repos pages videos updates', run: () => openSources() },
+      { id: 'sync', label: syncStatus?.enabled ? 'Sync now' : 'Turn on sync', icon: <RefreshCw size={16} />, keywords: 'devices merge shared folder', run: () => void syncNow() },
       ...(activeNote ? [{ id: 'attach', label: 'Attach a file to this note…', icon: <Paperclip size={16} />, keywords: 'upload insert embed', run: () => void pickFile().then((f) => f && activeEditor.current && insertAttachments(activeEditor.current, [f])) }] : []),
       { id: 'query', label: 'New saved query', icon: <SquareKanban size={16} />, keywords: 'view list table board filter', run: () => void saveQuery('type:task status:open sort:due', 'list') },
       { id: 'graph', label: 'Show graph of the whole vault', shortcut: 'Ctrl+Shift+G', icon: <Waypoints size={16} />, keywords: 'links network', run: () => showGraph('global') },
@@ -447,7 +482,7 @@ export function App() {
       { id: 'vault', label: 'Open another vault folder', icon: <FolderOpen size={16} />, keywords: 'switch', run: () => void pickVault() },
       { id: 'reindex', label: 'Rebuild the search index', icon: <RefreshCw size={16} />, keywords: 'reindex repair', run: () => void api.rebuildIndex().then(refreshList).catch((e) => setError(String(e))) },
     ],
-    [createNote, openToday, openInbox, openTasksView, openFiles, openSources, pickFile, saveQuery, showAsView, showGraph, lastNote, activeNote, deleteNote, pickVault, refreshList],
+    [createNote, openToday, openInbox, openTasksView, openFiles, openSources, pickFile, saveQuery, showAsView, showGraph, lastNote, activeNote, deleteNote, pickVault, refreshList, syncNow, syncStatus],
   )
 
   if (!vault) return <Welcome onPick={pickVault} error={error} />
@@ -554,6 +589,9 @@ export function App() {
         sourcesOpen={active.kind === 'sources'}
         openTasks={openTasks}
         sourceUpdates={sourceUpdates}
+        sync={syncStatus}
+        syncing={syncing}
+        onSync={() => void syncNow()}
         onInbox={() => openInbox()}
         onToday={() => void openToday()}
         onGraph={() => showGraph(graphMode)}

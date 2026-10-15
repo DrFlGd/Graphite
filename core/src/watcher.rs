@@ -69,14 +69,28 @@ fn rebase(root: &Path, canon: &Path, path: PathBuf) -> PathBuf {
 }
 
 /// Keep files and directories inside the vault, but never the root itself,
-/// hidden entries or anything under `.graphite/`.
+/// hidden entries or anything under `.graphite/`, except the sync
+/// documents other devices publish under `.graphite/sync/`, which the app
+/// wants to know about.
 fn relevant(root: &Path, state_dir: &Path, path: &Path) -> bool {
-    if path == root || path.starts_with(state_dir) {
+    if path == root {
         return false;
+    }
+    if path.starts_with(state_dir) {
+        return is_sync_document(state_dir, path);
     }
     let rel = path.strip_prefix(root).unwrap_or(path);
     !rel.components()
         .any(|c| c.as_os_str() == STATE_DIR || c.as_os_str().to_string_lossy().starts_with('.'))
+}
+
+/// `.graphite/sync/<device>/<something>` (not the `sync` folder itself).
+pub fn is_sync_document(state_dir: &Path, path: &Path) -> bool {
+    let Ok(rel) = path.strip_prefix(state_dir) else {
+        return false;
+    };
+    let mut parts = rel.components();
+    parts.next().is_some_and(|c| c.as_os_str() == crate::sync::SYNC_DIR) && parts.count() >= 2
 }
 
 #[cfg(test)]
@@ -148,6 +162,10 @@ mod tests {
         assert!(!relevant(root, &state, root));
         assert!(!relevant(root, &state, &state));
         assert!(!relevant(root, &state, &state.join("index.sqlite")));
+        assert!(!relevant(root, &state, &state.join("sync")));
+        assert!(!relevant(root, &state, &state.join("devices/abc/index.sqlite")));
+        assert!(relevant(root, &state, &state.join("sync/abc/01X.automerge")));
+        assert!(relevant(root, &state, &state.join("sync/abc/seen.json")));
         assert!(relevant(root, &state, &root.join("image.png")));
         assert!(!relevant(root, &state, &root.join(".hidden/x.png")));
         assert!(relevant(root, &state, &root.join("notes")));

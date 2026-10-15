@@ -1,0 +1,13 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc cc41ea8a118f72c74674091374cef39fceb3e65df3687c5260e0f1fd760468e5 # shrinks to devs = 3, ops = [Append { dev: 0, note: 2 }, Append { dev: 1, note: 2 }]
+cc 78d4ea3f596b7fa5ceee825d5bbc2da98595d9e6966849a72f04f1fd098be062 # shrinks to devs = 2, ops = [Append { dev: 0, note: 4 }, Propagate { dev: 0 }, Append { dev: 0, note: 1 }, Propagate { dev: 1 }]
+cc f952a9ccaee33247662f93df6269624e68c6a0df96c07d59c2c95b75ac439645 # shrinks to devs = 2, ops = [Append { dev: 0, note: 1 }, Append { dev: 1, note: 1 }, Propagate { dev: 1 }, Propagate { dev: 0 }, Append { dev: 0, note: 4 }]
+cc 7b46c6652255decfac0c029f3414fb8df4c1d927ef1973cf096fe84d4df79f4c # shrinks to devs = 2, ops = [Append { dev: 0, note: 3 }, Create { dev: 0 }, Create { dev: 0 }, Retitle { dev: 1, note: 5 }, Propagate { dev: 1 }, Propagate { dev: 0 }]
+cc 785becbc570e69d419c3fc87f4ddc329f92f7199960e1d5c1aae7e5c75d419d4 # shrinks to devs = 3, ops = [Append { dev: 0, note: 0 }, Delete { dev: 0, note: 1 }, Create { dev: 0 }, Create { dev: 0 }, Append { dev: 2, note: 0 }, Append { dev: 1, note: 5 }, Retitle { dev: 1, note: 5 }, Propagate { dev: 1 }, Propagate { dev: 2 }]
+cc 58c12cf47ce67f528d701d62e38289e355ffe3ba077532f433a1fe2bde54bc3c # shrinks to devs = 3, ops = [Append { dev: 1, note: 1 }, Retitle { dev: 1, note: 1 }, Propagate { dev: 1 }, Propagate { dev: 2 }, Append { dev: 2, note: 1 }]
+cc 79058b45e80d8bd62c920e760c45a4a80a876470edd7f77a8c714ddccba3e8f7 # shrinks to devs = 2, ops = [Create { dev: 0 }, Propagate { dev: 0 }, Propagate { dev: 1 }, Append { dev: 1, note: 3 }]

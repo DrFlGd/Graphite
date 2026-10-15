@@ -48,7 +48,11 @@ kbd { font-family: var(--gr-mono); font-size: 0.85em; background: var(--gr-bg-su
 .sidebar__note-title { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .sidebar__note-type { font-size: 11px; color: var(--gr-fg-muted); background: var(--gr-bg-subtle); padding: 0 6px; border-radius: 999px; }
 .sidebar__empty { color: var(--gr-fg-muted); padding: 8px; }
-.sidebar__footer { padding: 6px 12px; font-size: 12px; color: var(--gr-fg-muted); border-top: 1px solid var(--gr-border); }
+.sidebar__footer { padding: 6px 12px; font-size: 12px; color: var(--gr-fg-muted); border-top: 1px solid var(--gr-border); display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.sidebar__sync { display: inline-flex; align-items: center; gap: 4px; font: inherit; color: inherit; background: none; border: 0; padding: 2px 4px; border-radius: 4px; cursor: pointer; }
+.sidebar__sync:hover { background: var(--gr-bg-subtle); }
+.sidebar__sync.is-on { color: var(--gr-fg); }
+.sidebar__sync:disabled { cursor: default; opacity: 0.7; }
 
 /* Note pane */
 .note { display: flex; flex-direction: column; height: 100%; min-height: 0; }

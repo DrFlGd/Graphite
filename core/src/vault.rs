@@ -10,6 +10,7 @@ use ignore::WalkBuilder;
 use serde::{Deserialize, Serialize};
 
 use crate::assets::{self, Asset, DerivedState};
+use crate::device::{local_device, Device};
 use crate::error::{Error, Result};
 use crate::index::{Backlink, Index, ItemFilter, ItemRow, SearchHit};
 use crate::note::{new_id, Note, NoteSummary};
@@ -17,6 +18,9 @@ use crate::tasks::{self, Item, ItemKind, ItemStatus, Progress};
 
 pub const STATE_DIR: &str = ".graphite";
 pub const INDEX_FILE: &str = "index.sqlite";
+/// Per-device state (the index) lives under `.graphite/devices/<id>/` so
+/// machines sharing a vault folder never write the same database.
+pub const DEVICES_DIR: &str = "devices";
 pub const DEFAULT_NOTES_DIR: &str = "notes";
 pub const ATTACHMENTS_DIR: &str = "attachments";
 
@@ -32,6 +36,9 @@ pub struct VaultInfo {
 pub struct Vault {
     root: PathBuf,
     pub(crate) index: Index,
+    pub(crate) device: Device,
+    pub(crate) delete_grace: std::time::Duration,
+    pub(crate) absorb_delay: std::time::Duration,
 }
 
 impl Vault {
@@ -39,6 +46,12 @@ impl Vault {
     /// `notes/` and `attachments/` if missing, then brings the index up to
     /// date with the files on disk.
     pub fn open(root: impl AsRef<Path>) -> Result<Vault> {
+        Self::open_as(root, local_device())
+    }
+
+    /// `open`, but as a given device. Tests use it to run several devices
+    /// against copies of one vault in a single process.
+    pub fn open_as(root: impl AsRef<Path>, device: Device) -> Result<Vault> {
         let root = root
             .as_ref()
             .canonicalize()
@@ -46,17 +59,35 @@ impl Vault {
         if !root.is_dir() {
             return Err(Error::NotAVault(root));
         }
-        fs::create_dir_all(root.join(STATE_DIR))?;
+        let state = root.join(STATE_DIR);
+        let device_dir = state.join(DEVICES_DIR).join(&device.id);
+        fs::create_dir_all(&device_dir)?;
         fs::create_dir_all(root.join(DEFAULT_NOTES_DIR))?;
         fs::create_dir_all(root.join(ATTACHMENTS_DIR))?;
-        let index = Index::open(&root.join(STATE_DIR).join(INDEX_FILE))?;
-        let mut vault = Vault { root, index };
+        // Before M4 the index sat directly in `.graphite/`; it is a cache,
+        // so just drop it.
+        for legacy in [INDEX_FILE, "index.sqlite-wal", "index.sqlite-shm"] {
+            let _ = fs::remove_file(state.join(legacy));
+        }
+        let index = Index::open(&device_dir.join(INDEX_FILE))?;
+        let mut vault = Vault {
+            root,
+            index,
+            device,
+            delete_grace: crate::sync::DEFAULT_DELETE_GRACE,
+            absorb_delay: crate::sync::DEFAULT_ABSORB_DELAY,
+        };
         vault.sync()?;
         Ok(vault)
     }
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// The device this vault was opened as.
+    pub fn device(&self) -> &Device {
+        &self.device
     }
 
     pub fn info(&self) -> Result<VaultInfo> {
@@ -109,11 +140,19 @@ impl Vault {
             let meta = fs::metadata(path)?;
             let (mtime, size) = stat(&meta);
             if path.extension().and_then(|e| e.to_str()) != Some("md") {
+                if is_conflict_copy(&rel) {
+                    continue;
+                }
                 if self.index.asset_stat(&rel)? != Some((mtime, size)) {
                     self.index_asset(&rel, &meta)?;
                     changed += 1;
                 }
                 seen_assets.insert(rel);
+                continue;
+            }
+            if is_conflict_copy(&rel) {
+                // A sync client's duplicate of a note both devices edited;
+                // `sync_now` folds it into the note and removes it.
                 continue;
             }
             if self.index.stat(&rel)? == Some((mtime, size)) {
@@ -183,6 +222,9 @@ impl Vault {
             self.index.remove_asset(&rel)?;
             return Ok(None);
         }
+        if is_conflict_copy(&rel) {
+            return Ok(None);
+        }
         if abs.extension().and_then(|e| e.to_str()) != Some("md") {
             if is_hidden(&rel) {
                 return Ok(None);
@@ -214,6 +256,17 @@ impl Vault {
         let (mtime, size) = stat(&meta);
         self.index.upsert(&note, mtime, size)?;
         Ok(note.id)
+    }
+
+    /// Tell sync that Graphite itself wrote the note at `rel`, so the next
+    /// pass takes its content as a local edit. Only matters once sync is
+    /// on.
+    fn note_written(&mut self, rel: &str) -> Result<()> {
+        if !self.sync_enabled() {
+            return Ok(());
+        }
+        let note = self.read_by_path(rel)?;
+        self.index.mark_sync_dirty(&note.id, &crate::sync::content_hash(&note))
     }
 
     pub fn list(&self) -> Result<Vec<NoteSummary>> {
@@ -250,6 +303,7 @@ impl Vault {
         }
         fs::write(self.root.join(&rel), n.to_text())?;
         self.index_file(&rel)?;
+        self.note_written(&rel)?;
         Ok(n)
     }
 
@@ -281,6 +335,7 @@ impl Vault {
         };
         fs::write(&abs, note.to_text())?;
         self.index_file(&rel)?;
+        self.note_written(&rel)?;
         Ok(note)
     }
 
@@ -300,6 +355,9 @@ impl Vault {
         let rel = self.index.path_of(id)?.ok_or_else(|| Error::NoteNotFound(id.into()))?;
         fs::remove_file(self.root.join(&rel))?;
         self.index.remove_by_path(&rel)?;
+        // A deliberate delete becomes a tombstone on the next sync; an
+        // unexplained missing file waits out a grace period first.
+        self.index.mark_sync_deleted(id)?;
         Ok(())
     }
 
@@ -451,7 +509,17 @@ fn is_hidden(rel: &str) -> bool {
     rel.split('/').any(|seg| seg.starts_with('.'))
 }
 
-fn stat(meta: &fs::Metadata) -> (i64, i64) {
+/// Whether a file name is a sync client's duplicate of a file two machines
+/// changed at once (Dropbox, Syncthing, OneDrive, Google Drive, Nextcloud
+/// each have their own spelling). Such files are not indexed as notes;
+/// sync folds them back into the original.
+pub fn is_conflict_copy(rel: &str) -> bool {
+    let name = rel.rsplit('/').next().unwrap_or(rel);
+    let lower = name.to_lowercase();
+    lower.contains("conflicted copy") || lower.contains(".sync-conflict-") || lower.contains("(case conflict")
+}
+
+pub(crate) fn stat(meta: &fs::Metadata) -> (i64, i64) {
     let mtime = meta
         .modified()
         .ok()
@@ -508,7 +576,12 @@ mod tests {
         fs::write(dir.path().join("Projects/Robot.md"), "# Robot\n\nLinks to [[Motor]].\n").unwrap();
         fs::write(dir.path().join("Motor.md"), "A motor.\n").unwrap();
         let v = Vault::open(dir.path()).unwrap();
-        assert!(dir.path().join(".graphite/index.sqlite").exists());
+        assert!(dir
+            .path()
+            .join(".graphite/devices")
+            .join(&v.device().id)
+            .join("index.sqlite")
+            .exists());
         assert!(dir.path().join("notes").is_dir());
         assert_eq!(v.info().unwrap().note_count, 2);
         // ids were minted into the files
