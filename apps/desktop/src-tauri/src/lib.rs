@@ -963,6 +963,7 @@ fn toggle_capture_window_impl(app: &AppHandle) {
     let _ = app.emit_to(CAPTURE_WINDOW, "capture://shown", ());
 }
 
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
