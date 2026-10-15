@@ -45,6 +45,13 @@ export interface NoteEditorProps {
 export function NoteEditor(props: NoteEditorProps) {
   const { markdown, docKey, onChange, onFollowLink, onOpenFile, onOpenUrl, searchNotes, resolveSrc, blockContext, placeholder, editable = true, toolbarTrailing, autofocus, onReady, onFiles } = props
   const lastEmitted = useRef<string>(markdown)
+  /**
+   * The editor's own serialisation of the text it last loaded. Parsing and
+   * re-serialising can differ from the file in harmless ways (blank lines,
+   * list spacing); a note that was only looked at must not be rewritten for
+   * that, so updates that still serialise to this are not edits.
+   */
+  const loaded = useRef<{ markdown: string | null; edited: boolean }>({ markdown: null, edited: false })
   const context = useMemo<BlockContext>(() => blockContext ?? {}, [blockContext])
   const callbacks = useRef({ onChange, onFollowLink, onOpenFile, onOpenUrl, searchNotes, onReady, onFiles })
   callbacks.current = { onChange, onFollowLink, onOpenFile, onOpenUrl, searchNotes, onReady, onFiles }
@@ -121,8 +128,14 @@ export function NoteEditor(props: NoteEditorProps) {
           return true
         },
       },
-      onUpdate: ({ editor: e }) => {
+      onCreate: ({ editor: e }) => {
+        loaded.current = { markdown: e.getMarkdown(), edited: false }
+      },
+      onUpdate: ({ editor: e, transaction }) => {
+        if (!transaction.docChanged) return
         const md = e.getMarkdown()
+        if (!loaded.current.edited && md === loaded.current.markdown) return
+        loaded.current.edited = true
         if (md !== lastEmitted.current) {
           lastEmitted.current = md
           callbacks.current.onChange(md)
@@ -138,10 +151,11 @@ export function NoteEditor(props: NoteEditorProps) {
     if (markdown === lastEmitted.current) return
     lastEmitted.current = markdown
     editor.commands.setContent(prepareTaskMarkers(markdown), { contentType: 'markdown', emitUpdate: false })
+    loaded.current = { markdown: editor.getMarkdown(), edited: false }
   }, [markdown, editor])
 
   useEffect(() => {
-    if (editor && !editor.isDestroyed) editor.setEditable(editable)
+    if (editor && !editor.isDestroyed) editor.setEditable(editable, false)
   }, [editable, editor])
 
   useEffect(() => {

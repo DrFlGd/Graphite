@@ -4,9 +4,11 @@ export interface WikiLinkAttrs {
   target: string
   heading: string | null
   display: string | null
+  /** Written as `![[…]]`: an embed of a file or note rather than a plain link. */
+  embed?: boolean
 }
 
-const WIKI_RE = /^\[\[([^[\]\n]+?)\]\]/
+const WIKI_RE = /^(!?)\[\[([^[\]\n]+?)\]\]/
 
 /** Split the inside of `[[…]]` into target, heading and display text. */
 export function parseWikiInner(inner: string): WikiLinkAttrs {
@@ -19,7 +21,7 @@ export function wikiLinkToMarkdown(attrs: WikiLinkAttrs): string {
   let inner = attrs.target
   if (attrs.heading) inner += `#${attrs.heading}`
   if (attrs.display) inner += `|${attrs.display}`
-  return `[[${inner}]]`
+  return `${attrs.embed ? '!' : ''}[[${inner}]]`
 }
 
 function splitOnce(s: string, sep: string): [string, string | undefined] {
@@ -45,6 +47,7 @@ export const WikiLink = Node.create({
       target: { default: '' },
       heading: { default: null },
       display: { default: null },
+      embed: { default: false },
     }
   },
 
@@ -54,7 +57,7 @@ export const WikiLink = Node.create({
         tag: 'span[data-wiki-link]',
         getAttrs: (el) => {
           const e = el as HTMLElement
-          return { target: e.getAttribute('data-target') ?? '', heading: e.getAttribute('data-heading'), display: e.getAttribute('data-display') }
+          return { target: e.getAttribute('data-target') ?? '', heading: e.getAttribute('data-heading'), display: e.getAttribute('data-display'), embed: e.hasAttribute('data-embed') }
         },
       },
     ]
@@ -70,7 +73,8 @@ export const WikiLink = Node.create({
         'data-target': attrs.target,
         'data-heading': attrs.heading ?? undefined,
         'data-display': attrs.display ?? undefined,
-        class: 'gr-wiki-link',
+        'data-embed': attrs.embed ? '' : undefined,
+        class: attrs.embed ? 'gr-wiki-link gr-wiki-link--embed' : 'gr-wiki-link',
         role: 'link',
         tabindex: 0,
       }),
@@ -88,9 +92,12 @@ export const WikiLink = Node.create({
     return [
       nodeInputRule({
         // No capture group: nodeInputRule would otherwise keep the brackets as text around the node.
-        find: /\[\[[^[\]\n]+?\]\]$/,
+        find: /!?\[\[[^[\]\n]+?\]\]$/,
         type: this.type,
-        getAttributes: (match) => parseWikiInner(match[0].slice(2, -2)),
+        getAttributes: (match) => {
+          const embed = match[0].startsWith('!')
+          return { ...parseWikiInner(match[0].slice(embed ? 3 : 2, -2)), embed }
+        },
       }),
     ]
   },
@@ -98,16 +105,19 @@ export const WikiLink = Node.create({
   markdownTokenizer: {
     name: 'wikiLink',
     level: 'inline',
-    start: (src) => src.indexOf('[['),
+    start: (src) => {
+      const i = src.indexOf('[[')
+      return i > 0 && src[i - 1] === '!' ? i - 1 : i
+    },
     tokenize: (src) => {
       const m = WIKI_RE.exec(src)
       if (!m) return undefined
-      return { type: 'wikiLink', raw: m[0], ...parseWikiInner(m[1]) }
+      return { type: 'wikiLink', raw: m[0], ...parseWikiInner(m[2]), embed: m[1] === '!' }
     },
   },
 
   parseMarkdown: (token, helpers) =>
-    helpers.createNode('wikiLink', { target: token.target, heading: token.heading ?? null, display: token.display ?? null }),
+    helpers.createNode('wikiLink', { target: token.target, heading: token.heading ?? null, display: token.display ?? null, embed: !!token.embed }),
 
   renderMarkdown: (node) => wikiLinkToMarkdown(node.attrs as WikiLinkAttrs),
 })

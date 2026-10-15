@@ -126,6 +126,7 @@
 /* Wiki link chip */
 .gr-wiki-link { color: var(--gr-link); background: var(--gr-accent-bg); padding: 0.05em 0.35em; border-radius: 4px; cursor: pointer; text-decoration: none; }
 .gr-wiki-link:hover { text-decoration: underline; }
+.gr-wiki-link--embed { border: 1px dashed var(--gr-link); }
 .gr-wiki-link.ProseMirror-selectednode { outline: 2px solid var(--gr-accent); }
 
 /* Suggestion menus (slash + note links) */

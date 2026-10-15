@@ -127,14 +127,33 @@ export function App() {
     }
   }, [layout, vault])
 
-  // When the active tab is not a note, nothing is "the active note".
+  // When the active tab is not a note, nothing is "the active note". A project
+  // or saved query shown as its hub or results has no editor, but it is still
+  // the note on screen: load it so commands act on it and not on the last
+  // note that had an editor.
   const active = L.activeTab(layout)
+  const activeId = active.kind === 'note' ? active.noteId : null
+  const activeType = activeId ? notes.find((n) => n.id === activeId)?.type : undefined
+  const activeIsView = activeId !== null && (activeType === 'project' || activeType === 'query') && !editingNotes.has(activeId)
   useEffect(() => {
-    if (active.kind !== 'note') {
+    if (activeId === null || activeIsView) {
       setActiveNote(null)
       activeEditor.current = null
     }
-  }, [active])
+    if (activeId === null || !activeIsView) return
+    let cancelled = false
+    api
+      .readNote(activeId)
+      .then((n) => {
+        if (cancelled) return
+        setActiveNote(n)
+        setLastNote(n)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [activeId, activeIsView, version])
 
   const openNote = useCallback((id: string, newTab = false) => {
     setLayout((l) => L.open(l, { kind: 'note', noteId: id }, newTab))
@@ -310,6 +329,15 @@ export function App() {
   const followLink = useCallback(
     async (target: string) => {
       try {
+        // `[[mount.stl]]` and `![[mount.stl]]` name a file: open it rather than creating a note.
+        const name = target.split('/').pop() ?? target
+        if (/\.[a-z0-9]{1,8}$/i.test(name) && !/\.md$/i.test(name)) {
+          const match = (await api.assets(undefined, name)).find((a) => a.name.toLowerCase() === name.toLowerCase())
+          if (match) {
+            openAsset(match.path)
+            return
+          }
+        }
         const id = await api.followLink(target)
         await refreshList()
         openNote(id)
@@ -317,7 +345,7 @@ export function App() {
         setError(String(e))
       }
     },
-    [openNote, refreshList],
+    [openNote, openAsset, refreshList],
   )
 
   const deleteNote = useCallback(
@@ -481,7 +509,8 @@ export function App() {
       { id: 'new', label: 'New note', shortcut: 'Ctrl+N', icon: <FilePlus2 size={16} />, run: () => void createNote(`Untitled ${new Date().toLocaleString()}`) },
       { id: 'new-template', label: 'New note from template…', shortcut: 'Ctrl+Shift+N', icon: <LayoutTemplate size={16} />, keywords: 'project research build software writing decision', run: () => setPicker({ kind: 'create' }) },
       ...(activeNote && activeNote.type !== 'project' ? [{ id: 'promote', label: `Promote “${activeNote.title}” to a project…`, icon: <ArrowUpRight size={16} />, keywords: 'idea convert template', run: () => setPicker({ kind: 'promote', noteId: activeNote.id, title: activeNote.title }) }] : []),
-      ...(activeNote && (activeNote.type === 'project' || activeNote.type === 'query') ? [{ id: 'as-view', label: activeNote.type === 'project' ? 'Show project hub' : 'Show query results', icon: <SquareKanban size={16} />, run: () => showAsView(activeNote.id) }] : []),
+      ...(activeNote && (activeNote.type === 'project' || activeNote.type === 'query') && !activeIsView ? [{ id: 'as-view', label: activeNote.type === 'project' ? 'Show project hub' : 'Show query results', icon: <SquareKanban size={16} />, run: () => showAsView(activeNote.id) }] : []),
+      ...(activeNote && activeIsView ? [{ id: 'as-text', label: `Edit “${activeNote.title}” as text`, icon: <FilePlus2 size={16} />, keywords: 'markdown source note', run: () => editAsNote(activeNote.id) }] : []),
       { id: 'today', label: "Open today's daily note", shortcut: 'Ctrl+D', icon: <CalendarDays size={16} />, keywords: 'daily journal', run: () => void openToday() },
       { id: 'inbox', label: 'Show inbox', icon: <Inbox size={16} />, keywords: 'triage captures', run: () => openInbox() },
       { id: 'tasks', label: 'Show tasks', shortcut: 'Ctrl+Shift+T', icon: <ListChecks size={16} />, keywords: 'todo tracker gaps questions board', run: () => openTasksView() },
@@ -492,7 +521,7 @@ export function App() {
       { id: 'sync-settings', label: 'Sync settings', icon: <Settings2 size={16} />, keywords: 'relay devices invite large files', run: () => setSyncOpen(true) },
       { id: 'snapshot', label: 'Take a snapshot of the vault', icon: <Archive size={16} />, keywords: 'backup zip', run: () => void takeSnapshot() },
       { id: 'snapshots', label: 'Show snapshots folder', icon: <Archive size={16} />, keywords: 'backups zip', run: () => void api.revealSnapshots().catch((e) => setError(String(e))) },
-      ...(activeNote ? [{ id: 'attach', label: 'Attach a file to this note…', icon: <Paperclip size={16} />, keywords: 'upload insert embed', run: () => void pickFile().then((f) => f && activeEditor.current && insertAttachments(activeEditor.current, [f])) }] : []),
+      ...(activeNote && !activeIsView ? [{ id: 'attach', label: 'Attach a file to this note…', icon: <Paperclip size={16} />, keywords: 'upload insert embed', run: () => void pickFile().then((f) => f && activeEditor.current && insertAttachments(activeEditor.current, [f])) }] : []),
       { id: 'query', label: 'New saved query', icon: <SquareKanban size={16} />, keywords: 'view list table board filter', run: () => void saveQuery('type:task status:open sort:due', 'list') },
       { id: 'graph', label: 'Show graph of the whole vault', shortcut: 'Ctrl+Shift+G', icon: <Waypoints size={16} />, keywords: 'links network', run: () => showGraph('global') },
       ...(lastNote ? [{ id: 'graph-local', label: `Show graph around “${lastNote.title}”`, icon: <Locate size={16} />, keywords: 'local links', run: () => showGraph('local') }] : []),
@@ -504,13 +533,13 @@ export function App() {
       { id: 'vault', label: 'Open another vault folder', icon: <FolderOpen size={16} />, keywords: 'switch', run: () => void pickVault() },
       { id: 'reindex', label: 'Rebuild the search index', icon: <RefreshCw size={16} />, keywords: 'reindex repair', run: () => void api.rebuildIndex().then(refreshList).catch((e) => setError(String(e))) },
     ],
-    [createNote, openToday, openInbox, openTasksView, openFiles, openSources, pickFile, saveQuery, showAsView, showGraph, lastNote, activeNote, deleteNote, pickVault, refreshList, syncNow, syncStatus, takeSnapshot],
+    [createNote, openToday, openInbox, openTasksView, openFiles, openSources, pickFile, saveQuery, showAsView, editAsNote, activeIsView, showGraph, lastNote, activeNote, deleteNote, pickVault, refreshList, syncNow, syncStatus, takeSnapshot],
   )
 
   if (!vault) return <Welcome onPick={pickVault} error={error} />
 
   const inboxCount = notes.filter((n) => n.path.startsWith(INBOX_DIR + '/')).length
-  const showContext = active.kind === 'note' && activeNote !== null
+  const showContext = active.kind === 'note' && activeNote !== null && !activeIsView
 
   const body = (tab: L.Tab, isActive: boolean) => {
     switch (tab.kind) {

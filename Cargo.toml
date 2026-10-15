@@ -21,7 +21,6 @@ ignore = "0.4"
 regex = "1"
 chrono = { version = "0.4", features = ["serde"] }
 notify = "8"
-notify-debouncer-mini = "0.7"
 tracing = "0.1"
 tempfile = "3"
 sha2 = "0.10"
