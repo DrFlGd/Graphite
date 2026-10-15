@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use graphite_core::{
-    Backlink, Graph, Item, ItemFilter, ItemKind, ItemRow, ItemStatus, Note, NoteSummary, Progress, SearchHit, Vault,
-    VaultInfo, Watcher,
+    Backlink, Graph, Item, ItemFilter, ItemKind, ItemRow, ItemStatus, Note, NoteSummary, Progress, ProjectHub,
+    QueryResult, SearchHit, Template, Vault, VaultInfo, Watcher,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -186,6 +186,41 @@ fn add_item(state: State<AppState>, note_id: String, kind: String, text: String)
 }
 
 #[tauri::command]
+fn query(state: State<AppState>, query: String) -> CmdResult<QueryResult> {
+    with_vault(&state, |v| v.query(&query))
+}
+
+#[tauri::command]
+fn run_saved_query(state: State<AppState>, id: String) -> CmdResult<QueryResult> {
+    with_vault(&state, |v| v.run_saved_query(&id))
+}
+
+#[tauri::command]
+fn templates(state: State<AppState>) -> CmdResult<Vec<Template>> {
+    with_vault(&state, |v| v.templates())
+}
+
+#[tauri::command]
+fn create_from_template(
+    state: State<AppState>,
+    title: String,
+    template: String,
+    folder: Option<String>,
+) -> CmdResult<Note> {
+    with_vault(&state, |v| v.create_from_template(&title, &template, folder.as_deref()))
+}
+
+#[tauri::command]
+fn promote_to_project(state: State<AppState>, id: String, template: Option<String>) -> CmdResult<Note> {
+    with_vault(&state, |v| v.promote_to_project(&id, template.as_deref()))
+}
+
+#[tauri::command]
+fn project_hub(state: State<AppState>, id: String) -> CmdResult<ProjectHub> {
+    with_vault(&state, |v| v.project_hub(&id))
+}
+
+#[tauri::command]
 fn rebuild_index(state: State<AppState>) -> CmdResult<usize> {
     with_vault(&state, |v| v.rebuild())
 }
@@ -333,6 +368,12 @@ pub fn run() {
             set_item_status,
             answer_gap,
             add_item,
+            query,
+            run_saved_query,
+            templates,
+            create_from_template,
+            promote_to_project,
+            project_hub,
             graph,
             local_graph,
             follow_link,

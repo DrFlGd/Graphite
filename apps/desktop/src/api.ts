@@ -107,6 +107,50 @@ export interface ItemFilter {
   text?: string | null
 }
 
+export interface NoteRow extends NoteSummary {
+  created: string | null
+  properties: Record<string, unknown>
+}
+
+export interface QueryGroup {
+  key: string
+  count: number
+}
+
+/** Result of a query; rows are sorted and, when grouped, ordered group by group. */
+export interface QueryResult {
+  domain: 'notes' | 'items'
+  notes: NoteRow[]
+  items: ItemRow[]
+  groups: QueryGroup[]
+  total: number
+}
+
+export interface Template {
+  name: string
+  description: string
+  note_type: string
+  folder: string
+  properties: Record<string, unknown>
+  body: string
+  builtin: boolean
+}
+
+export interface LinkedNote extends NoteSummary {
+  relation: string | null
+  incoming: boolean
+}
+
+export interface ProjectHub {
+  project: NoteSummary
+  progress: Progress
+  tasks: ItemRow[]
+  gaps: ItemRow[]
+  decisions: NoteSummary[]
+  sources: NoteSummary[]
+  linked: LinkedNote[]
+}
+
 export interface Progress {
   tasks: number
   done: number
@@ -138,6 +182,13 @@ export const api = {
   setItemStatus: (noteId: string, line: number, status: ItemStatus) => invoke<Item>('set_item_status', { noteId, line, status }),
   answerGap: (noteId: string, line: number, answer: string) => invoke<Item>('answer_gap', { noteId, line, answer }),
   addItem: (noteId: string, kind: ItemKind, text: string) => invoke<Item>('add_item', { noteId, kind, text }),
+  query: (query: string) => invoke<QueryResult>('query', { query }),
+  runSavedQuery: (id: string) => invoke<QueryResult>('run_saved_query', { id }),
+  templates: () => invoke<Template[]>('templates'),
+  createFromTemplate: (title: string, template: string, folder?: string) =>
+    invoke<Note>('create_from_template', { title, template, folder }),
+  promoteToProject: (id: string, template?: string) => invoke<Note>('promote_to_project', { id, template }),
+  projectHub: (id: string) => invoke<ProjectHub>('project_hub', { id }),
   completeTitle: (prefix: string) => invoke<NoteSummary[]>('complete_title', { prefix }),
   rebuildIndex: () => invoke<number>('rebuild_index'),
   attachFile: (src: string, folder?: string) => invoke<string>('attach_file', { src, folder }),
