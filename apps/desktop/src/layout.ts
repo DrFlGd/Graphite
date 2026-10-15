@@ -7,6 +7,7 @@ export type TabSpec =
   | { kind: 'graph' }
   | { kind: 'tasks' }
   | { kind: 'files' }
+  | { kind: 'sources' }
   | { kind: 'asset'; path: string; page?: number }
   | { kind: 'empty' }
 export type Tab = TabSpec & { id: string }
@@ -147,7 +148,7 @@ export function parseLayout(raw: unknown): Layout | null {
   const panes: Pane[] = []
   for (const p of l.panes) {
     if (!p || !Array.isArray(p.tabs)) return null
-    const tabs = p.tabs.filter((t: Tab) => t && typeof t.id === 'string' && (t.kind === 'empty' || t.kind === 'inbox' || t.kind === 'graph' || t.kind === 'tasks' || t.kind === 'files' || (t.kind === 'note' && typeof t.noteId === 'string') || (t.kind === 'asset' && typeof t.path === 'string')))
+    const tabs = p.tabs.filter((t: Tab) => t && typeof t.id === 'string' && (t.kind === 'empty' || t.kind === 'inbox' || t.kind === 'graph' || t.kind === 'tasks' || t.kind === 'files' || t.kind === 'sources' || (t.kind === 'note' && typeof t.noteId === 'string') || (t.kind === 'asset' && typeof t.path === 'string')))
     if (tabs.length === 0) tabs.push(emptyTab())
     panes.push({ id: typeof p.id === 'string' ? p.id : newId(), tabs, active: Math.min(Math.max(0, Number(p.active) || 0), tabs.length - 1) })
   }

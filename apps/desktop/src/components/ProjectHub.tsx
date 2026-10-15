@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
-import { FilePlus2, SquarePen } from 'lucide-react'
-import { api, type ItemRow, type ProjectHub as Hub } from '../api'
+import { Download, FilePlus2, SquarePen } from 'lucide-react'
+import { api, type ItemRow, type ProjectHub as Hub, type SourceRow } from '../api'
+import { SourceKindIcon, shortUrl } from './sources'
 import { QueryView, type ViewKind } from './QueryView'
 import { FilesView } from './FilesView'
 
@@ -12,6 +13,8 @@ interface Props {
   assetVersion: number
   onOpenFile: (path: string, newTab?: boolean) => void
   onFilesChanged: () => void
+  /** Open the import dialog with this project preselected. */
+  onImport: (project: string) => void
   onOpen: (id: string, newTab?: boolean) => void
   onChanged: () => void
   onError: (e: string) => void
@@ -24,8 +27,9 @@ interface Props {
  * open questions, decisions, sources and linked notes, all gathered from
  * the index. The note's own text is one click away.
  */
-export function ProjectHub({ noteId, version, vaultRoot, assetVersion, onOpenFile, onFilesChanged, onOpen, onChanged, onError, onEdit }: Props) {
+export function ProjectHub({ noteId, version, vaultRoot, assetVersion, onOpenFile, onFilesChanged, onImport, onOpen, onChanged, onError, onEdit }: Props) {
   const [hub, setHub] = useState<Hub | null>(null)
+  const [sources, setSources] = useState<Map<string, SourceRow>>(() => new Map())
   const [query, setQuery] = useState<string | null>(null)
   const [view, setView] = useState<ViewKind>('tree')
 
@@ -44,6 +48,20 @@ export function ProjectHub({ noteId, version, vaultRoot, assetVersion, onOpenFil
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [noteId, version])
+
+  // Source records (url, update flag) for the Sources section.
+  useEffect(() => {
+    let cancelled = false
+    api
+      .sources()
+      .then((rows) => {
+        if (!cancelled) setSources(new Map(rows.map((r) => [r.id, r])))
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [version])
 
   const act = useCallback(
     async (f: () => Promise<unknown>) => {
@@ -145,13 +163,25 @@ export function ProjectHub({ noteId, version, vaultRoot, assetVersion, onOpenFil
         </section>
 
         <section className="hub__section">
-          <h3>Sources {hub.sources.length > 0 && <span className="qv__muted">{hub.sources.length}</span>}</h3>
-          {hub.sources.length === 0 && <p className="hub__empty">Sources (imported pages, repos, videos) arrive in M3. Notes of type source linked here will show up.</p>}
-          {hub.sources.map((s) => (
-            <button key={s.id} type="button" className="context__item" onClick={(e) => onOpen(s.id, e.ctrlKey || e.metaKey)}>
-              <span>{s.title}</span>
+          <div className="hub__section-head">
+            <h3>Sources {hub.sources.length > 0 && <span className="qv__muted">{hub.sources.length}</span>}</h3>
+            <button type="button" className="icon-btn" title="Import a repo, page, video, PDF or file from a URL into this project" onClick={() => onImport(hub.project.title)}>
+              <Download size={14} />
             </button>
-          ))}
+          </div>
+          {hub.sources.length === 0 && <p className="hub__empty">Nothing imported yet. Paste a GitHub, article, video or PDF link with the import button, and it lands here.</p>}
+          {hub.sources.map((s) => {
+            const r = sources.get(s.id)
+            return (
+              <button key={s.id} type="button" className={`context__item ${r?.update_available ? 'has-update' : ''}`} onClick={(e) => onOpen(s.id, e.ctrlKey || e.metaKey)} title={r ? r.url : s.path}>
+                <span className="hub__source">
+                  {r && <SourceKindIcon kind={r.kind} size={13} />}
+                  <span>{s.title}</span>
+                </span>
+                {r?.update_available ? <span className="qv__badge source-row__badge">changed</span> : r ? <span className="context__rel">{shortUrl(r.url).split('/')[0]}</span> : null}
+              </button>
+            )
+          })}
         </section>
 
         <section className="hub__section hub__section--files">

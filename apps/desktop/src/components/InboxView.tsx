@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react'
-import { ExternalLink, FolderInput, Trash2 } from 'lucide-react'
+import { Download, ExternalLink, FolderInput, Trash2 } from 'lucide-react'
 import { api, INBOX_DIR, type Note, type NoteSummary } from '../api'
+import { firstUrl } from './sources'
 
 interface Props {
   notes: NoteSummary[]
   onOpen: (id: string) => void
+  /** A capture that is a link: import it as a source (the capture goes once that succeeds). */
+  onImport: (url: string, captureId: string) => void
   onChanged: () => void
   onError: (e: string) => void
 }
@@ -12,7 +15,7 @@ interface Props {
 const TYPES = ['note', 'idea', 'project', 'area', 'source', 'capture']
 
 /** Inbox triage: read each capture, then file it (move + type) or drop it. */
-export function InboxView({ notes, onOpen, onChanged, onError }: Props) {
+export function InboxView({ notes, onOpen, onImport, onChanged, onError }: Props) {
   const inbox = notes.filter((n) => n.path.startsWith(INBOX_DIR + '/'))
   const [folders, setFolders] = useState<string[]>([])
   const [previews, setPreviews] = useState<Record<string, string>>({})
@@ -64,6 +67,7 @@ export function InboxView({ notes, onOpen, onChanged, onError }: Props) {
       <ul className="inbox__list">
         {inbox.map((n) => {
           const target = newFolder[n.id] ?? ''
+          const url = previews[n.id] ? firstUrl(previews[n.id]) : null
           return (
             <li key={n.id} className="inbox__item">
               <div className="inbox__main">
@@ -106,6 +110,11 @@ export function InboxView({ notes, onOpen, onChanged, onError }: Props) {
                 <button type="button" className="icon-btn" title="Move" disabled={!target.trim()} onClick={() => void act(() => api.moveNote(n.id, target.trim()))}>
                   <FolderInput size={16} />
                 </button>
+                {url && (
+                  <button type="button" className="btn inbox__import" title={`Import ${url} as a source`} onClick={() => onImport(url, n.id)}>
+                    <Download size={14} /> Import
+                  </button>
+                )}
                 <button type="button" className="icon-btn" title="Open" onClick={() => onOpen(n.id)}>
                   <ExternalLink size={16} />
                 </button>

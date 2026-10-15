@@ -113,9 +113,20 @@ Every non-Markdown file in the vault (outside `.graphite/` and hidden folders) i
 - **Kind** follows the extension: `image`, `vector` (SVG, AI, EPS, DXF), `video`, `audio`, `pdf`, `model` (glTF/GLB, OBJ, STL, PLY, 3MF, STEP/IGES, FBX…), `code`, `data` (CSV, JSON, YAML, XML, spreadsheets), `document`, `archive`, `other`.
 - **Metadata** recorded at index time, from the file alone: size, modified time, image or SVG dimensions, model bounding box and dimensions (STL, OBJ, glTF), CSV rows and columns. Derived afterwards, in the background: SHA-256 content hash, video/audio duration, dimensions and codecs (ffprobe), PDF page count, title and author (pdfinfo).
 - **Derived files** under `.graphite/derived/`, named by the first 24 hex characters of the content hash: `<hash>.jpg` thumbnails (video frame, PDF first page, images, via ffmpeg and pdftoppm) and `<hash>.txt` extracted text (PDF text via pdftotext; code and data files verbatim up to 2 MB). Extracted text and file names are full-text searchable alongside notes. Missing tools simply mean no thumbnail or text; nothing else changes.
-- **Folders** are a convention: `attachments/<Project>/` for a project's own files, `attachments/` for shared ones, `attachments/sources/` for imported content. An asset can be referenced from any number of notes and projects without copying.
+- **Folders** are a convention: `attachments/<Project>/` for a project's own files, `attachments/` for shared ones, `attachments/sources/` for imported content (see Sources below). An asset can be referenced from any number of notes and projects without copying.
 - A note with `type: asset` and a `file` property naming the path can carry tags, properties and prose about a file; the file itself stays untouched.
 - Editing a file in another app is picked up by the watcher: the asset is re-indexed and its previews regenerated.
+
+### Sources (M3)
+
+Anything imported from a URL becomes a **source**: a note with `type: source` under `notes/Sources/` plus a folder of files under `attachments/sources/<name>/`. The note's front matter is the source record and is the only copy of it, so it survives a cache rebuild:
+
+- `url` — what was imported. `source_type` — which importer: `github`, `git`, `page`, `video`, `pdf` or `file`. `folder` — the vault-relative folder holding the files.
+- `fetched` — when the files were last written. `hash` — what the content looked like then: the SHA-256 of a downloaded file, of a page's readable text, or the commit id for a repository (also kept in `commit`), or the video id in `video`.
+- `last_checked`, `update_available`, `update_summary` — the last "check for updates": the source is compared with upstream (remote HEAD, page text, file hash) and the outcome is written here. Re-importing fetches again into the same folder, rewrites the note body and clears the flag; tags and extra properties on the note are kept.
+- `project: "[[Title]]"` links the source to a project, so it appears in that project's hub. Importers may add `words`, `video_title`, `duration` or `file`.
+
+The note body starts with `# Title`, then `source:: <url>` and `project:: [[Title]]` as inline fields, then what the importer produced: a repository's README, a page's readable text with a link to the archived `page.html` and `screenshot.png`, an embedded video or PDF. Files in the folder are ordinary assets, so they get previews and their text is searchable. The whole of `attachments/sources/` is content, never cache: deleting the `.graphite/` folder loses nothing.
 
 ### Captures and daily notes
 
