@@ -13,6 +13,8 @@ interface Props {
   changed: { ids: string[]; seq: number }
   /** A note another tab just saved; adopt it if it is ours and we are clean. */
   saved: Note | null
+  /** Front-matter edits from the context panel, applied through the normal save path. */
+  patch: { id: string; patch: Partial<Note>; seq: number } | null
   onActiveNote: (note: Note | null) => void
   onEditorReady: (editor: Editor | null) => void
   onSaved: (note: Note) => void
@@ -27,7 +29,7 @@ interface Props {
  * One open note: loads it, autosaves edits (debounced, flushed on close),
  * reloads when the file changes underneath it, and attaches pasted files.
  */
-export function NoteTab({ noteId, active, changed, saved, onActiveNote, onEditorReady, onSaved, onFollowLink, onDelete, onError, resolveSrc, pickImage }: Props) {
+export function NoteTab({ noteId, active, changed, saved, patch, onActiveNote, onEditorReady, onSaved, onFollowLink, onDelete, onError, resolveSrc, pickImage }: Props) {
   const [note, setNote] = useState<Note | null>(null)
   const [saveState, setSaveState] = useState<'saved' | 'dirty' | 'saving'>('saved')
   const pending = useRef<{ timer: number | null; note: Note | null }>({ timer: null, note: null })
@@ -100,6 +102,22 @@ export function NoteTab({ noteId, active, changed, saved, onActiveNote, onEditor
   useEffect(() => {
     if (saved && saved.id === noteId && !pending.current.note) setNote((c) => (c && c.updated !== saved.updated ? saved : c))
   }, [saved, noteId])
+
+  // Property edits from the context panel.
+  const appliedPatch = useRef(0)
+  useEffect(() => {
+    if (!patch || patch.id !== noteId || patch.seq === appliedPatch.current) return
+    appliedPatch.current = patch.seq
+    setNote((c) => {
+      if (!c) return c
+      const n = { ...c, ...patch.patch }
+      pending.current.note = n
+      setSaveState('dirty')
+      if (pending.current.timer) window.clearTimeout(pending.current.timer)
+      pending.current.timer = window.setTimeout(() => void flush(), SAVE_DELAY_MS)
+      return n
+    })
+  }, [patch, noteId, flush])
 
   // Tell the app what is on screen.
   useEffect(() => {

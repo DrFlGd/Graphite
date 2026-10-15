@@ -11,6 +11,9 @@ const CASES: Record<string, string> = {
   bulletList: '- a\n- b\n  - nested',
   orderedList: '1. first\n2. second',
   taskList: '- [ ] todo\n- [x] done',
+  taskStates: '- [ ] open\n- [/] doing\n- [x] done\n- [-] cancelled\n- [?] a gap',
+  taskNested: '- [ ] parent due:: 2026-11-01 #p1\n  - [?] child question\n  - [/] child doing',
+  taskLinked: '- [?] [[Pump]] current? blocks:: [[Order parts]]',
   blockquote: '> quoted\n> text',
   codeBlock: '```rust\nfn main() {}\n```',
   codeBlockNoLang: '```\nplain\n```',
@@ -35,6 +38,16 @@ describe('markdown round-trip', () => {
     const para = doc.content?.[0]
     const link = para?.content?.find((n) => n.type === 'wikiLink')
     expect(link?.attrs).toEqual({ target: 'A', heading: null, display: 'b' })
+  })
+
+  it('gives task items their state', () => {
+    const doc = markdownToDoc('- [?] why\n- [/] now\n- [x] did')
+    const list = doc.content?.[0]
+    expect(list?.type).toBe('taskList')
+    expect(list?.content?.map((n) => n.attrs?.state)).toEqual(['gap', 'doing', 'done'])
+    expect(list?.content?.[0].content?.[0].content?.[0].text).toBe('why')
+    const fence = '```\n- [?] not a task\n```'
+    expect(roundTrip(fence).trim()).toBe(fence)
   })
 
   it('leaves code untouched', () => {

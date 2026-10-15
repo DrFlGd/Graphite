@@ -2,6 +2,7 @@ import type { Editor } from '@tiptap/core'
 import { EditorContent, useEditor } from '@tiptap/react'
 import { useEffect, useMemo, useRef, type ReactNode } from 'react'
 import { buildExtensions } from './extensions'
+import { prepareTaskMarkers } from './blocks/taskItem'
 import type { BlockContext } from './blocks'
 import type { NoteCandidate } from './extensions/NoteLinkSuggest'
 import { Toolbar } from './Toolbar'
@@ -60,7 +61,7 @@ export function NoteEditor(props: NoteEditorProps) {
   const editor = useEditor(
     {
       extensions,
-      content: markdown,
+      content: prepareTaskMarkers(markdown),
       contentType: 'markdown',
       editable,
       autofocus: autofocus ? 'end' : false,
@@ -117,7 +118,7 @@ export function NoteEditor(props: NoteEditorProps) {
     if (!editor || editor.isDestroyed) return
     if (markdown === lastEmitted.current) return
     lastEmitted.current = markdown
-    editor.commands.setContent(markdown, { contentType: 'markdown', emitUpdate: false })
+    editor.commands.setContent(prepareTaskMarkers(markdown), { contentType: 'markdown', emitUpdate: false })
   }, [markdown, editor])
 
   useEffect(() => {
