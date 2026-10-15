@@ -992,8 +992,7 @@ impl Vault {
             .or_else(|| prop_str(note, "project").map(|p| p.trim_matches(['[', ']']).to_string()))
             .map(|p| format!("project:: [[{p}]]\n"))
             .unwrap_or_default();
-        let summary;
-        match kind {
+        let summary = match kind {
             SourceKind::Github | SourceKind::Git => {
                 if !tools().git {
                     return Err(other("git is not installed"));
@@ -1049,7 +1048,7 @@ impl Vault {
                 if let Some(r) = readme_rel {
                     files.push(r);
                 }
-                summary = if old.is_empty() {
+                if old.is_empty() {
                     format!("Cloned {} at {}", note.title, &commit[..7.min(commit.len())])
                 } else if old == commit {
                     "Already at the latest commit".to_string()
@@ -1059,7 +1058,7 @@ impl Vault {
                         &old[..7.min(old.len())],
                         &commit[..7.min(commit.len())]
                     )
-                };
+                }
             }
             SourceKind::Page => {
                 let (html, _) = fetch_text(url)?;
@@ -1110,12 +1109,12 @@ impl Vault {
                 note.body = body;
                 note.properties.insert("hash".into(), json!(sha256_str(&page.markdown)));
                 note.properties.insert("words".into(), json!(words));
-                summary = format!(
+                format!(
                     "Saved \"{}\" ({} words, {} images)",
                     note.title,
                     words,
                     page.images.len().min(MAX_PAGE_IMAGES)
-                );
+                )
             }
             SourceKind::Video => {
                 if !tools().yt_dlp {
@@ -1223,11 +1222,11 @@ impl Vault {
                 if let Some(t) = &thumb_rel {
                     files.push(t.clone());
                 }
-                summary = format!(
+                format!(
                     "Downloaded \"{}\"{}",
                     v.title,
                     v.duration.map(|d| format!(" ({})", hms(d))).unwrap_or_default()
-                );
+                )
             }
             SourceKind::Pdf | SourceKind::File => {
                 let fetch_url = if kind == SourceKind::Pdf {
@@ -1280,9 +1279,9 @@ impl Vault {
                 note.body = body;
                 note.properties.insert("hash".into(), json!(hash));
                 note.properties.insert("file".into(), json!(rel));
-                summary = format!("Downloaded {name}");
+                format!("Downloaded {name}")
             }
-        }
+        };
         note.properties.insert("fetched".into(), json!(Utc::now().to_rfc3339()));
         note.properties.insert("update_available".into(), json!(false));
         note.properties.remove("update_summary");
