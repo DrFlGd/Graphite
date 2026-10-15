@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
-import { api, assetUrl, type Note, type NoteSummary, type VaultInfo } from './api'
+import { getCurrentWebview } from '@tauri-apps/api/webview'
+import { insertAttachments, type AttachmentItem, type Editor } from '@graphite/ui'
+import { api, assetUrl, fileToBase64, INBOX_DIR, type Note, type NoteSummary, type VaultInfo } from './api'
 import { Sidebar } from './components/Sidebar'
 import { NotePane } from './components/NotePane'
+import { InboxView } from './components/InboxView'
 import { ContextPanel } from './components/ContextPanel'
 import { QuickSwitcher } from './components/QuickSwitcher'
 import { Welcome } from './components/Welcome'
@@ -15,9 +18,12 @@ export function App() {
   const [notes, setNotes] = useState<NoteSummary[]>([])
   const [current, setCurrent] = useState<Note | null>(null)
   const [switcherOpen, setSwitcherOpen] = useState(false)
+  const [view, setView] = useState<'note' | 'inbox'>('note')
   const [error, setError] = useState<string | null>(null)
   const [saveState, setSaveState] = useState<'saved' | 'dirty' | 'saving'>('saved')
   const pending = useRef<{ timer: number | null; note: Note | null }>({ timer: null, note: null })
+  /** The live editor of the open note, for inserting dropped/pasted files. */
+  const editorRef = useRef<Editor | null>(null)
 
   const refreshList = useCallback(async () => {
     try {
@@ -95,11 +101,93 @@ export function App() {
       try {
         const note = await api.readNote(id)
         setCurrent(note)
+        setView('note')
       } catch (e) {
         setError(String(e))
       }
     },
     [flushSave],
+  )
+
+  const openInbox = useCallback(async () => {
+    await flushSave()
+    setView('inbox')
+  }, [flushSave])
+
+  const openToday = useCallback(async () => {
+    await flushSave()
+    try {
+      const note = await api.dailyNote()
+      await refreshList()
+      setCurrent(note)
+      setView('note')
+    } catch (e) {
+      setError(String(e))
+    }
+  }, [flushSave, refreshList])
+
+  // The capture window asked us to show a note it just saved.
+  useEffect(() => {
+    if (!vault) return
+    let unlisten: (() => void) | undefined
+    void api.onOpenNote((id) => void openNote(id)).then((u) => {
+      unlisten = u
+    })
+    return () => unlisten?.()
+  }, [vault, openNote])
+
+  /** Copy files into the vault and put them into the open note. */
+  const addFiles = useCallback(async (items: AttachmentItem[], pos?: number) => {
+    const editor = editorRef.current
+    if (!editor || editor.isDestroyed || items.length === 0) return
+    insertAttachments(editor, items, pos)
+  }, [])
+
+  // Files dropped onto the window (Tauri hands us paths, not File objects).
+  useEffect(() => {
+    if (!vault) return
+    let unlisten: (() => void) | undefined
+    void getCurrentWebview()
+      .onDragDropEvent(async (e) => {
+        if (e.payload.type !== 'drop') return
+        const editor = editorRef.current
+        if (!editor || editor.isDestroyed) return
+        const items: AttachmentItem[] = []
+        for (const p of e.payload.paths) {
+          try {
+            const src = await api.attachFile(p)
+            items.push({ src, name: p.split(/[\\/]/).pop() ?? src })
+          } catch (err) {
+            setError(String(err))
+          }
+        }
+        const scale = window.devicePixelRatio || 1
+        const pos = editor.view.posAtCoords({ left: e.payload.position.x / scale, top: e.payload.position.y / scale })?.pos
+        await addFiles(items, pos)
+      })
+      .then((u) => {
+        unlisten = u
+      })
+    return () => unlisten?.()
+  }, [vault, addFiles])
+
+  // Files pasted into the editor arrive as File objects: store their bytes.
+  const onPastedFiles = useCallback(
+    async (files: File[], pos?: number) => {
+      const items: AttachmentItem[] = []
+      for (const f of files) {
+        const ext = f.type.split('/')[1] || 'bin'
+        const name = !f.name || f.name === 'image.png' ? `pasted-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.${ext}` : f.name
+        try {
+          const src = await api.attachData(name, await fileToBase64(f))
+          items.push({ src, name })
+        } catch (err) {
+          setError(String(err))
+        }
+      }
+      await addFiles(items, pos)
+    },
+    [addFiles],
   )
 
   // Notes changed on disk by something else: refresh the list and reload the open note.
@@ -164,17 +252,20 @@ export function App() {
     }
   }, [current, refreshList])
 
-  // Keyboard: Ctrl/Cmd+K quick switcher, Ctrl/Cmd+N new note, Ctrl/Cmd+S flush.
+  // Keyboard: Ctrl/Cmd+K quick switcher, Ctrl/Cmd+N new note, Ctrl/Cmd+D today, Ctrl/Cmd+S flush.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey
-      if (!mod) return
+      if (!mod || e.altKey) return
       if (e.key === 'k' || e.key === 'p') {
         e.preventDefault()
         setSwitcherOpen(true)
       } else if (e.key === 'n') {
         e.preventDefault()
         void createNote(`Untitled ${new Date().toLocaleString()}`)
+      } else if (e.key === 'd') {
+        e.preventDefault()
+        void openToday()
       } else if (e.key === 's') {
         e.preventDefault()
         void flushSave()
@@ -182,7 +273,7 @@ export function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [createNote, flushSave])
+  }, [createNote, flushSave, openToday])
 
   const resolveSrc = useMemo(() => (vault ? (src: string) => assetUrl(vault.root, src) : undefined), [vault])
 
@@ -199,11 +290,28 @@ export function App() {
 
   if (!vault) return <Welcome onPick={pickVault} error={error} />
 
+  const inboxCount = notes.filter((n) => n.path.startsWith(INBOX_DIR + '/')).length
+  const showNote = view === 'note' && current !== null
+
   return (
-    <div className="app">
-      <Sidebar vault={vault} notes={notes} currentId={current?.id ?? null} onOpen={openNote} onCreate={createNote} onPickVault={pickVault} onSearch={() => setSwitcherOpen(true)} />
+    <div className={`app ${showNote ? '' : 'app--no-context'}`}>
+      <Sidebar
+        vault={vault}
+        notes={notes}
+        currentId={showNote ? current.id : null}
+        onOpen={openNote}
+        onCreate={createNote}
+        onPickVault={pickVault}
+        onSearch={() => setSwitcherOpen(true)}
+        inboxCount={inboxCount}
+        inboxOpen={view === 'inbox'}
+        onInbox={() => void openInbox()}
+        onToday={() => void openToday()}
+      />
       <main className="app__main">
-        {current ? (
+        {view === 'inbox' ? (
+          <InboxView notes={notes} onOpen={(id) => void openNote(id)} onChanged={() => void refreshList()} onError={setError} />
+        ) : current ? (
           <NotePane
             key={current.id}
             note={current}
@@ -216,14 +324,23 @@ export function App() {
             onDelete={deleteCurrent}
             resolveSrc={resolveSrc}
             pickImage={pickImage}
+            onEditorReady={(ed) => {
+              editorRef.current = ed
+            }}
+            onFiles={(files, pos) => void onPastedFiles(files, pos)}
           />
         ) : (
           <div className="app__empty">
-            <p>Pick a note on the left, press <kbd>Ctrl</kbd>+<kbd>N</kbd> for a new one, or <kbd>Ctrl</kbd>+<kbd>K</kbd> to search.</p>
+            <p>
+              Pick a note on the left, press <kbd>Ctrl</kbd>+<kbd>N</kbd> for a new one, <kbd>Ctrl</kbd>+<kbd>D</kbd> for today, or <kbd>Ctrl</kbd>+<kbd>K</kbd> to search.
+            </p>
+            <p>
+              <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Space</kbd> anywhere captures a thought to the inbox.
+            </p>
           </div>
         )}
       </main>
-      {current && <ContextPanel note={current} onOpen={openNote} onFollowLink={followLink} />}
+      {showNote && <ContextPanel note={current} onOpen={openNote} onFollowLink={followLink} />}
       {switcherOpen && <QuickSwitcher onClose={() => setSwitcherOpen(false)} onOpen={(id) => void openNote(id)} onCreate={(t) => void createNote(t)} />}
       {error && (
         <div className="app__error" role="alert" onClick={() => setError(null)}>

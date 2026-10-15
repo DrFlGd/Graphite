@@ -4,6 +4,8 @@
 //! and ADR-002). Everything in here is either a reader/writer of those files
 //! or a rebuildable index over them.
 
+pub mod attachments;
+pub mod capture;
 pub mod error;
 pub mod index;
 pub mod links;
@@ -11,6 +13,7 @@ pub mod note;
 pub mod vault;
 pub mod watcher;
 
+pub use capture::{capture_title, is_url, DAILY_DIR, INBOX_DIR};
 pub use error::{Error, Result};
 pub use index::{Backlink, SearchHit};
 pub use links::{Link, LinkKind};

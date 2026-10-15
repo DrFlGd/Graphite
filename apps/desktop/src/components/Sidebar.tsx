@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { FilePlus2, FolderOpen, Search } from 'lucide-react'
+import { CalendarDays, FilePlus2, FolderOpen, Inbox, Search } from 'lucide-react'
 import type { NoteSummary, VaultInfo } from '../api'
 
 interface Props {
@@ -10,9 +10,13 @@ interface Props {
   onCreate: (title: string) => void
   onPickVault: () => void
   onSearch: () => void
+  inboxCount: number
+  inboxOpen: boolean
+  onInbox: () => void
+  onToday: () => void
 }
 
-export function Sidebar({ vault, notes, currentId, onOpen, onCreate, onPickVault, onSearch }: Props) {
+export function Sidebar({ vault, notes, currentId, onOpen, onCreate, onPickVault, onSearch, inboxCount, inboxOpen, onInbox, onToday }: Props) {
   const [filter, setFilter] = useState('')
   const [newTitle, setNewTitle] = useState('')
 
@@ -42,6 +46,15 @@ export function Sidebar({ vault, notes, currentId, onOpen, onCreate, onPickVault
         </button>
         <button type="button" className="icon-btn" title="Search (Ctrl+K)" onClick={onSearch}>
           <Search size={16} />
+        </button>
+      </div>
+      <div className="sidebar__nav">
+        <button type="button" className={`sidebar__nav-btn ${inboxOpen ? 'is-current' : ''}`} onClick={onInbox} title="Captured notes waiting to be filed">
+          <Inbox size={14} /> Inbox
+          {inboxCount > 0 && <span className="sidebar__count">{inboxCount}</span>}
+        </button>
+        <button type="button" className="sidebar__nav-btn" onClick={onToday} title="Today's daily note (Ctrl+D)">
+          <CalendarDays size={14} /> Today
         </button>
       </div>
       <form

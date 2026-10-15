@@ -1,7 +1,7 @@
 //! Tauri shell: holds the open vault and exposes core operations as
 //! commands. The UI never touches the file system directly.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use graphite_core::{Backlink, Note, NoteSummary, SearchHit, Vault, VaultInfo, Watcher};
@@ -154,32 +154,88 @@ fn rebuild_index(state: State<AppState>) -> CmdResult<usize> {
 /// return its vault-relative path (what goes into the Markdown).
 #[tauri::command]
 fn attach_file(state: State<AppState>, src: String, folder: Option<String>) -> CmdResult<String> {
-    with_vault(&state, |v| {
-        let src = PathBuf::from(&src);
-        let name = src
-            .file_name()
-            .and_then(|n| n.to_str())
-            .ok_or_else(|| graphite_core::Error::PathEscapesVault(src.clone()))?;
-        let folder = folder.unwrap_or_else(|| graphite_core::vault::ATTACHMENTS_DIR.to_string());
-        let mut rel = format!("{folder}/{name}");
-        let mut dest = v.safe_join(&rel)?;
-        // Never overwrite: suffix the name until it is free.
-        let (stem, ext) = match name.rsplit_once('.') {
-            Some((s, e)) => (s.to_string(), format!(".{e}")),
-            None => (name.to_string(), String::new()),
-        };
-        let mut n = 1;
-        while dest.exists() {
-            n += 1;
-            rel = format!("{folder}/{stem}-{n}{ext}");
-            dest = v.safe_join(&rel)?;
-        }
-        if let Some(parent) = dest.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::copy(&src, &dest)?;
-        Ok(rel)
-    })
+    with_vault(&state, |v| v.import_attachment(Path::new(&src), folder.as_deref()))
+}
+
+/// Write pasted bytes (base64) as a new attachment; returns the vault-relative path.
+#[tauri::command]
+fn attach_data(state: State<AppState>, name: String, data_base64: String, folder: Option<String>) -> CmdResult<String> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data_base64.as_bytes())
+        .map_err(err)?;
+    with_vault(&state, |v| v.write_attachment(&name, &bytes, folder.as_deref()))
+}
+
+#[tauri::command]
+fn capture(app: AppHandle, state: State<AppState>, text: String, attachments: Vec<String>) -> CmdResult<Note> {
+    let note = with_vault(&state, |v| v.capture(&text, &attachments))?;
+    let _ = app.emit(
+        "vault://changed",
+        ChangedPayload {
+            ids: vec![note.id.clone()],
+        },
+    );
+    Ok(note)
+}
+
+#[tauri::command]
+fn daily_note(state: State<AppState>) -> CmdResult<Note> {
+    with_vault(&state, |v| v.daily_note(chrono::Local::now().date_naive()))
+}
+
+#[tauri::command]
+fn move_note(state: State<AppState>, id: String, folder: String) -> CmdResult<Note> {
+    with_vault(&state, |v| v.move_note(&id, &folder))
+}
+
+#[tauri::command]
+fn set_note_type(state: State<AppState>, id: String, note_type: String) -> CmdResult<Note> {
+    with_vault(&state, |v| v.set_type(&id, &note_type))
+}
+
+#[tauri::command]
+fn folders(state: State<AppState>) -> CmdResult<Vec<String>> {
+    with_vault(&state, |v| v.folders())
+}
+
+/// Hide the quick-capture window (Esc / after saving).
+#[tauri::command]
+fn hide_capture_window(app: AppHandle) -> CmdResult<()> {
+    if let Some(w) = app.get_webview_window(CAPTURE_WINDOW) {
+        w.hide().map_err(err)?;
+    }
+    Ok(())
+}
+
+/// Bring the main window forward and open a note there (from the capture window).
+#[tauri::command]
+fn open_in_main(app: AppHandle, id: String) -> CmdResult<()> {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.show();
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+    }
+    app.emit_to("main", "note://open", id).map_err(err)
+}
+
+const CAPTURE_WINDOW: &str = "capture";
+pub const CAPTURE_SHORTCUT: &str = "CmdOrCtrl+Shift+Space";
+
+/// Show the capture window (or hide it if it is already in front).
+fn toggle_capture_window(app: &AppHandle) {
+    let Some(w) = app.get_webview_window(CAPTURE_WINDOW) else {
+        tracing::warn!("no capture window");
+        return;
+    };
+    if w.is_visible().unwrap_or(false) && w.is_focused().unwrap_or(false) {
+        let _ = w.hide();
+        return;
+    }
+    let _ = w.center();
+    let _ = w.show();
+    let _ = w.set_focus();
+    let _ = app.emit_to(CAPTURE_WINDOW, "capture://shown", ());
 }
 
 pub fn run() {
@@ -187,10 +243,33 @@ pub fn run() {
         .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .init();
 
+    // The global shortcut registers at plugin setup; on platforms that refuse
+    // (some Wayland sessions) the app still runs, only without the hotkey.
+    let shortcuts = tauri_plugin_global_shortcut::Builder::new()
+        .with_handler(|app, _shortcut, event| {
+            if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                toggle_capture_window(app);
+            }
+        })
+        .with_shortcut(CAPTURE_SHORTCUT)
+        .unwrap_or_else(|e| {
+            tracing::warn!("capture shortcut not registered: {e}");
+            tauri_plugin_global_shortcut::Builder::new()
+        })
+        .build();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(shortcuts)
         .manage(AppState::default())
+        // The hidden capture window would otherwise keep the process alive after
+        // the main window closes.
+        .on_window_event(|window, event| {
+            if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
+                window.app_handle().exit(0);
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             open_vault,
             vault_info,
@@ -207,6 +286,14 @@ pub fn run() {
             complete_title,
             rebuild_index,
             attach_file,
+            attach_data,
+            capture,
+            daily_note,
+            move_note,
+            set_note_type,
+            folders,
+            hide_capture_window,
+            open_in_main,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Graphite");

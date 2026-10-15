@@ -10,6 +10,8 @@ pub enum Error {
     NoteExists(PathBuf),
     #[error("invalid front-matter in {path}: {reason}")]
     FrontMatter { path: PathBuf, reason: String },
+    #[error("nothing to capture")]
+    EmptyCapture,
     #[error("path escapes the vault: {0}")]
     PathEscapesVault(PathBuf),
     #[error(transparent)]

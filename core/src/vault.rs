@@ -127,7 +127,7 @@ impl Vault {
         self.index_file(&rel).map(Some)
     }
 
-    fn index_file(&mut self, rel: &str) -> Result<String> {
+    pub(crate) fn index_file(&mut self, rel: &str) -> Result<String> {
         let abs = self.root.join(rel);
         let text = fs::read_to_string(&abs)?;
         let mut note = Note::parse(rel, &text)?;
@@ -254,6 +254,15 @@ impl Vault {
         self.index.summary(id)
     }
 
+    /// Vault-relative path of a note by id, if indexed.
+    pub fn path_of(&self, id: &str) -> Result<Option<String>> {
+        self.index.path_of(id)
+    }
+
+    pub(crate) fn index_remove_path(&self, rel: &str) -> Result<Option<String>> {
+        self.index.remove_by_path(rel)
+    }
+
     /// Relative path (with `/` separators) of an absolute path inside the vault.
     pub fn rel(&self, abs: &Path) -> Result<String> {
         let rel = abs
@@ -285,7 +294,7 @@ fn stat(meta: &fs::Metadata) -> (i64, i64) {
     (mtime, meta.len() as i64)
 }
 
-fn to_rel_string(p: &Path) -> String {
+pub(crate) fn to_rel_string(p: &Path) -> String {
     p.components()
         .filter_map(|c| match c {
             Component::Normal(s) => Some(s.to_string_lossy().into_owned()),
