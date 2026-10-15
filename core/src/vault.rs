@@ -244,17 +244,21 @@ impl Vault {
 
     pub(crate) fn index_file(&mut self, rel: &str) -> Result<String> {
         let abs = self.root.join(rel);
-        let text = fs::read_to_string(&abs)?;
+        let mut text = fs::read_to_string(&abs)?;
         let mut note = Note::parse(rel, &text)?;
         if note.id.is_empty() {
             note.id = new_id();
             // Minting an id is the one write Graphite does to a file it did
             // not author: the id is what keeps links stable across renames.
-            fs::write(&abs, note.to_text())?;
+            text = note.to_text();
+            fs::write(&abs, &text)?;
         }
         let meta = fs::metadata(&abs)?;
         let (mtime, size) = stat(&meta);
         self.index.upsert(&note, mtime, size)?;
+        if let Err(e) = self.record_version(&note, &text) {
+            tracing::warn!("history for {rel}: {e}");
+        }
         Ok(note.id)
     }
 

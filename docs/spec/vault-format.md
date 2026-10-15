@@ -15,8 +15,10 @@ MyVault/
 ├── templates/             the vault's own note and project templates (optional)
 ├── canvases/              whiteboards (M5), *.canvas.json
 └── .graphite/             Graphite's own state (never synced, never hand-edited)
-    ├── index.sqlite       full-text index, links, properties (rebuildable)
-    ├── crdt/              per-note CRDT docs and sync log (M4)
+    ├── devices/<id>/      this device's index.sqlite (rebuildable)
+    ├── sync/<id>/         per-note Automerge documents, one folder per device (M4)
+    ├── history/<note-id>/ saved versions of each note, plain Markdown (M4)
+    ├── snapshots/         zip snapshots of the vault minus .graphite/ (M4)
     ├── derived/           thumbnails, transcripts, OCR text, converted previews
     └── config.json        vault settings
 ```
@@ -141,6 +143,12 @@ A **pass** (`graphite sync`, or the app on open, every minute and whenever files
 Recorded edits are deterministic: the file's content is diffed against the document state the file was last reconciled at (or, for a file the sync client replaced, the closest recent state in the document's history), by an actor derived from that state and the content. Two devices that see the same file before each other's documents therefore produce the identical change, which merges as one. The content hash is over title, type, tags, aliases, created, updated, properties and body, never the path or front-matter formatting.
 
 What stays plain: the notes. Sync adds no markers to Markdown, and deleting `.graphite/sync/` on every device only forgets the shared history; the files are intact and the next pass starts over from them. Files under `.graphite/devices/` (each device's index) and `.graphite/derived/` may be excluded from the sync client; `.graphite/sync/` must be included.
+
+### History and snapshots (M4)
+
+Every time a note's content changes, by any route (editing, sync, an outside program), its file is copied whole to `.graphite/history/<note-id>/<unix-ms>-<device>.md`, where `<device>` is the first eight characters of the device id that noticed the change. Edits closer together than ten minutes on one device replace the previous version rather than adding one, and the newest 200 versions are kept. A version is the note's full Markdown, so any tool can read, diff or restore one; restoring through Graphite writes the old content back as the current note (the content it replaces becomes a version first). The folder is cache in the sense of ADR-002, deleting it loses nothing current, but it is worth including in the sync client so every device sees the same history.
+
+A **snapshot** is a zip of the whole vault except `.graphite/`, named `<vault>-<YYYYMMDD-HHMMSS>.zip`, taken by the app once a day (and on request) into `.graphite/snapshots/`, or into the folder `GRAPHITE_SNAPSHOT_DIR` points at, which is the place to choose when snapshots should live outside the vault (and outside the sync client). The newest ten are kept per folder. Restoring is unzipping.
 
 ### Captures and daily notes
 
