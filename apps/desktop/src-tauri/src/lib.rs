@@ -4,7 +4,10 @@
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use graphite_core::{Backlink, Graph, Note, NoteSummary, SearchHit, Vault, VaultInfo, Watcher};
+use graphite_core::{
+    Backlink, Graph, Item, ItemFilter, ItemKind, ItemRow, ItemStatus, Note, NoteSummary, Progress, SearchHit, Vault,
+    VaultInfo, Watcher,
+};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -156,6 +159,33 @@ fn complete_title(state: State<AppState>, prefix: String) -> CmdResult<Vec<NoteS
 }
 
 #[tauri::command]
+fn items(state: State<AppState>, filter: ItemFilter) -> CmdResult<Vec<ItemRow>> {
+    with_vault(&state, |v| v.items(&filter))
+}
+
+#[tauri::command]
+fn progress(state: State<AppState>, project_id: String) -> CmdResult<Progress> {
+    with_vault(&state, |v| v.progress(&project_id))
+}
+
+#[tauri::command]
+fn set_item_status(state: State<AppState>, note_id: String, line: usize, status: String) -> CmdResult<Item> {
+    let status = ItemStatus::parse(&status).ok_or_else(|| format!("unknown status '{status}'"))?;
+    with_vault(&state, |v| v.set_item_status(&note_id, line, status))
+}
+
+#[tauri::command]
+fn answer_gap(state: State<AppState>, note_id: String, line: usize, answer: String) -> CmdResult<Item> {
+    with_vault(&state, |v| v.answer_gap(&note_id, line, &answer))
+}
+
+#[tauri::command]
+fn add_item(state: State<AppState>, note_id: String, kind: String, text: String) -> CmdResult<Item> {
+    let kind = ItemKind::parse(&kind).ok_or_else(|| format!("unknown item kind '{kind}'"))?;
+    with_vault(&state, |v| v.add_item(&note_id, kind, &text))
+}
+
+#[tauri::command]
 fn rebuild_index(state: State<AppState>) -> CmdResult<usize> {
     with_vault(&state, |v| v.rebuild())
 }
@@ -298,6 +328,11 @@ pub fn run() {
             backlinks,
             unlinked_mentions,
             outgoing_links,
+            items,
+            progress,
+            set_item_status,
+            answer_gap,
+            add_item,
             graph,
             local_graph,
             follow_link,

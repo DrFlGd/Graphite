@@ -12,6 +12,8 @@ pub enum Error {
     FrontMatter { path: PathBuf, reason: String },
     #[error("nothing to capture")]
     EmptyCapture,
+    #[error("line {line} of note {note} is not a task or gap")]
+    NotAnItem { note: String, line: usize },
     #[error("path escapes the vault: {0}")]
     PathEscapesVault(PathBuf),
     #[error(transparent)]
