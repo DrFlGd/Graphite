@@ -29,6 +29,9 @@ imagesize = "0.15"
 ureq = { version = "3", features = ["platform-verifier"] }
 scraper = "0.27"
 htmd = "0.5"
+automerge = "0.12"
+dirs = "6"
+proptest = "1"
 
 [profile.release]
 strip = true

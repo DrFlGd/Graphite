@@ -99,6 +99,15 @@ enum Cmd {
         /// Source note (title or id)
         source: String,
     },
+    /// Merge this device's notes with the other devices sharing the vault
+    /// folder (turns sync on for the vault the first time)
+    Sync {
+        /// Only show the devices and when they last synced
+        #[arg(long)]
+        status: bool,
+    },
+    /// Show this device's id and name
+    Device,
     /// Turn a note (an idea, say) into a project, keeping its text
     Promote {
         target: String,
@@ -382,6 +391,56 @@ fn run() -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&report)?);
             } else {
                 println!("{}\n  note {}", report.summary, report.note.path);
+            }
+        }
+        Cmd::Sync { status } => {
+            if status {
+                let s = vault.sync_status()?;
+                if cli.json {
+                    println!("{}", serde_json::to_string_pretty(&s)?);
+                } else if !s.enabled {
+                    println!("Sync is off for this vault. Run `graphite sync` to turn it on.");
+                } else {
+                    for d in s.devices {
+                        println!(
+                            "{:<24} {:<5} notes  last sync {}{}",
+                            d.name,
+                            d.notes,
+                            d.last_sync
+                                .map(|t| t.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+                                .unwrap_or_else(|| "never".into()),
+                            if d.this_device { "  (this device)" } else { "" }
+                        );
+                    }
+                }
+            } else {
+                let r = vault.sync_now()?;
+                if cli.json {
+                    println!("{}", serde_json::to_string_pretty(&r)?);
+                } else {
+                    println!(
+                        "published {}, pulled {}, deleted {}, conflicts folded {}, other devices {}",
+                        r.pushed,
+                        r.pulled.len(),
+                        r.deleted.len(),
+                        r.conflicts,
+                        r.devices
+                    );
+                    if r.pending > 0 {
+                        println!(
+                            "{} note(s) changed outside Graphite; run again shortly to record them",
+                            r.pending
+                        );
+                    }
+                }
+            }
+        }
+        Cmd::Device => {
+            let d = vault.device();
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(d)?);
+            } else {
+                println!("{}  {}", d.id, d.name);
             }
         }
         Cmd::Tools => {

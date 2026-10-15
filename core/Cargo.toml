@@ -25,6 +25,9 @@ imagesize.workspace = true
 ureq.workspace = true
 scraper.workspace = true
 htmd.workspace = true
+automerge.workspace = true
+dirs.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+proptest.workspace = true

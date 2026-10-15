@@ -12,7 +12,7 @@ use crate::note::{Note, NoteSummary};
 use crate::tasks::{parse_items, Item, ItemKind, ItemStatus};
 use std::collections::HashMap;
 
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -115,6 +115,29 @@ CREATE INDEX IF NOT EXISTS assets_name ON assets(name COLLATE NOCASE);
 CREATE VIRTUAL TABLE IF NOT EXISTS assets_fts USING fts5(
   path UNINDEXED, name, body, tokenize = 'unicode61 remove_diacritics 2'
 );
+
+-- Sync state of this device (see sync.rs): the content hash and path each
+-- note had when this device last reconciled it with its document.
+CREATE TABLE IF NOT EXISTS sync_notes (
+  note_id       TEXT PRIMARY KEY,
+  hash          TEXT NOT NULL,
+  path          TEXT NOT NULL,
+  deleted       INTEGER NOT NULL DEFAULT 0,
+  missing_since INTEGER,
+  heads         TEXT NOT NULL DEFAULT '',
+  dirty         TEXT,
+  pending       TEXT,
+  pending_since INTEGER,
+  pending_text  TEXT
+);
+-- Which versions of other devices' documents this device has merged.
+CREATE TABLE IF NOT EXISTS sync_peers (
+  device   TEXT NOT NULL,
+  file     TEXT NOT NULL,
+  mtime_ms INTEGER NOT NULL,
+  size     INTEGER NOT NULL,
+  PRIMARY KEY (device, file)
+);
 "#;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -160,6 +183,27 @@ pub struct ItemRow {
     pub note_path: String,
     pub project_id: Option<String>,
     pub project_title: Option<String>,
+}
+
+/// What this device last reconciled for one note (see `sync.rs`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyncState {
+    pub hash: String,
+    pub path: String,
+    pub deleted: bool,
+    pub missing_since: Option<i64>,
+    /// Document heads (comma-separated) the file was last reconciled at.
+    pub heads: String,
+    /// Content hash of what Graphite itself last wrote to the file, if
+    /// that was after the last pass (so a file with this hash is a local
+    /// edit, not one the sync client delivered).
+    pub dirty: Option<String>,
+    /// An unexplained content hash first seen at `pending_since` (ms);
+    /// absorbed once it has sat still long enough.
+    pub pending: Option<String>,
+    pub pending_since: Option<i64>,
+    /// The file as it was when `pending` was recorded.
+    pub pending_text: Option<String>,
 }
 
 pub struct Index {
@@ -208,7 +252,7 @@ impl Index {
 
     pub fn clear(&self) -> Result<()> {
         self.conn.execute_batch(
-            "DELETE FROM items; DELETE FROM links; DELETE FROM properties; DELETE FROM aliases; DELETE FROM tags; DELETE FROM notes; DELETE FROM notes_fts; DELETE FROM assets; DELETE FROM assets_fts;",
+            "DELETE FROM items; DELETE FROM links; DELETE FROM properties; DELETE FROM aliases; DELETE FROM tags; DELETE FROM notes; DELETE FROM notes_fts; DELETE FROM assets; DELETE FROM assets_fts; DELETE FROM sync_notes; DELETE FROM sync_peers;",
         )?;
         Ok(())
     }
@@ -941,6 +985,126 @@ impl Index {
         Ok(self
             .conn
             .query_row("SELECT COUNT(*) FROM assets", [], |r| r.get::<_, i64>(0))? as usize)
+    }
+
+    // ----- sync state -------------------------------------------------
+
+    pub fn sync_state(&self, note_id: &str) -> Result<Option<SyncState>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT hash, path, deleted, missing_since, heads, dirty, pending, pending_since, pending_text FROM sync_notes WHERE note_id = ?1",
+                params![note_id],
+                |r| {
+                    Ok(SyncState {
+                        hash: r.get(0)?,
+                        path: r.get(1)?,
+                        deleted: r.get::<_, i64>(2)? != 0,
+                        missing_since: r.get(3)?,
+                        heads: r.get(4)?,
+                        dirty: r.get(5)?,
+                        pending: r.get(6)?,
+                        pending_since: r.get(7)?,
+                        pending_text: r.get(8)?,
+                    })
+                },
+            )
+            .optional()?)
+    }
+
+    pub fn sync_states(&self) -> Result<Vec<(String, SyncState)>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT note_id, hash, path, deleted, missing_since, heads, dirty, pending, pending_since, pending_text FROM sync_notes ORDER BY note_id")?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get(0)?,
+                SyncState {
+                    hash: r.get(1)?,
+                    path: r.get(2)?,
+                    deleted: r.get::<_, i64>(3)? != 0,
+                    missing_since: r.get(4)?,
+                    heads: r.get(5)?,
+                    dirty: r.get(6)?,
+                    pending: r.get(7)?,
+                    pending_since: r.get(8)?,
+                    pending_text: r.get(9)?,
+                },
+            ))
+        })?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    /// Record that `note_id` on disk at `path` has content hash `hash` and
+    /// matches this device's document. Clears any deletion mark.
+    pub fn set_sync_state(&self, note_id: &str, hash: &str, path: &str, heads: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO sync_notes(note_id, hash, path, deleted, missing_since, heads, dirty, pending) VALUES (?1, ?2, ?3, 0, NULL, ?4, NULL, NULL)
+             ON CONFLICT(note_id) DO UPDATE SET hash = excluded.hash, path = excluded.path, deleted = 0, missing_since = NULL, heads = excluded.heads, dirty = NULL, pending = NULL, pending_since = NULL, pending_text = NULL",
+            params![note_id, hash, path, heads],
+        )?;
+        Ok(())
+    }
+
+    /// Mark a note as deliberately deleted on this device, so the next
+    /// sync publishes a tombstone instead of waiting out the grace period.
+    pub fn mark_sync_deleted(&self, note_id: &str) -> Result<()> {
+        self.conn
+            .execute("UPDATE sync_notes SET deleted = 1 WHERE note_id = ?1", params![note_id])?;
+        Ok(())
+    }
+
+    /// Note that Graphite itself just wrote `note_id` with content `hash`.
+    pub fn mark_sync_dirty(&self, note_id: &str, hash: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO sync_notes(note_id, hash, path, dirty) VALUES (?1, '', '', ?2)
+             ON CONFLICT(note_id) DO UPDATE SET dirty = excluded.dirty",
+            params![note_id, hash],
+        )?;
+        Ok(())
+    }
+
+    /// Note an unexplained content hash (creating the row if needed).
+    pub fn set_sync_pending(&self, note_id: &str, pending: &str, since: i64, text: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO sync_notes(note_id, hash, path, pending, pending_since, pending_text) VALUES (?1, '', '', ?2, ?3, ?4)
+             ON CONFLICT(note_id) DO UPDATE SET pending = excluded.pending, pending_since = excluded.pending_since, pending_text = excluded.pending_text",
+            params![note_id, pending, since, text],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_sync_missing_since(&self, note_id: &str, since: Option<i64>) -> Result<()> {
+        self.conn.execute(
+            "UPDATE sync_notes SET missing_since = ?2 WHERE note_id = ?1",
+            params![note_id, since],
+        )?;
+        Ok(())
+    }
+
+    pub fn remove_sync_state(&self, note_id: &str) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM sync_notes WHERE note_id = ?1", params![note_id])?;
+        Ok(())
+    }
+
+    pub fn peer_stat(&self, device: &str, file: &str) -> Result<Option<(i64, i64)>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT mtime_ms, size FROM sync_peers WHERE device = ?1 AND file = ?2",
+                params![device, file],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?)
+    }
+
+    pub fn set_peer_stat(&self, device: &str, file: &str, mtime_ms: i64, size: i64) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO sync_peers(device, file, mtime_ms, size) VALUES (?1, ?2, ?3, ?4)",
+            params![device, file, mtime_ms, size],
+        )?;
+        Ok(())
     }
 
     pub fn count(&self) -> Result<usize> {
