@@ -61,14 +61,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # macOS is left out for now (Jerred, 2026-10-15): nobody needs it yet
+        # and the universal build is the slowest job. To bring it back, add
+        #   - name: macos-universal
+        #     os: macos-latest
+        #     tauri_args: --target universal-apple-darwin
+        #     bundle_dir: target/universal-apple-darwin/release/bundle
+        #     cli: graphite
         include:
           - name: linux-x86_64
             os: ubuntu-22.04
-            cli: graphite
-          - name: macos-universal
-            os: macos-latest
-            tauri_args: --target universal-apple-darwin
-            bundle_dir: target/universal-apple-darwin/release/bundle
             cli: graphite
           - name: windows-x86_64
             os: windows-latest
