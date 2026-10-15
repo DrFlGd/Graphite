@@ -8,6 +8,12 @@ Your data is a folder of Markdown notes and attachments ([vault format](docs/spe
 
 Milestone **M0 (foundations)** and the capture half of **M1**: a desktop app that opens a vault, lists notes, edits them in a rich Markdown editor with an insert toolbar and `/` menu, links notes with `[[`, shows backlinks and unlinked mentions, and searches the vault. `Ctrl/Cmd+Shift+Space` anywhere opens a quick-capture box that saves to the inbox (text, links, dropped or pasted files); an inbox view files captures into folders; files dropped or pasted into a note are copied into `attachments/` and linked; `Ctrl/Cmd+D` opens today's daily note. A graph view draws the whole vault or the neighbourhood of a note (typed links dashed, missing notes hollow), with a mini graph beside every note; `Ctrl/Cmd+Shift+P` opens a command palette that reaches every command. Notes open in tabs (Ctrl/Cmd+click for a new tab) and the window splits into up to three panes. Plus a CLI over the same core.
 
+## Install
+
+Installers for Windows (`.msi` / setup `.exe`), macOS (universal `.dmg`) and Linux (`.AppImage`, `.deb`, `.rpm`), plus the CLI, are on the [releases page](https://github.com/DrFlGd/Graphite/releases). The builds are not code-signed yet, so the OS will warn on first launch: on macOS run `xattr -cr /Applications/Graphite.app` once (or right-click the app and choose Open); on Windows choose "More info" then "Run anyway" in the SmartScreen prompt.
+
+A release is cut by pushing a version tag (`git tag v0.1.0 && git push origin v0.1.0`); `.github/workflows/release.yml` builds the installers and publishes them.
+
 ## Repository
 
 | Path | What |
