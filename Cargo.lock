@@ -1838,7 +1838,7 @@ dependencies = [
 
 [[package]]
 name = "graphite-cli"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1849,7 +1849,7 @@ dependencies = [
 
 [[package]]
 name = "graphite-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "automerge",
@@ -1881,7 +1881,7 @@ dependencies = [
 
 [[package]]
 name = "graphite-desktop"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -1900,7 +1900,7 @@ dependencies = [
 
 [[package]]
 name = "graphite-relay"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "axum",
  "futures-util",
