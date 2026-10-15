@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { CalendarDays, FilePlus2, FolderOpen, Inbox, ListChecks, Search, Waypoints } from 'lucide-react'
+import { CalendarDays, FilePlus2, FolderOpen, Inbox, LayoutTemplate, ListChecks, Search, Waypoints } from 'lucide-react'
 import type { NoteSummary, VaultInfo } from '../api'
 
 interface Props {
@@ -9,6 +9,7 @@ interface Props {
   /** `newTab` when the user Ctrl/Cmd-clicks or middle-clicks. */
   onOpen: (id: string, newTab?: boolean) => void
   onCreate: (title: string) => void
+  onCreateFromTemplate: () => void
   onPickVault: () => void
   onSearch: () => void
   inboxCount: number
@@ -22,7 +23,7 @@ interface Props {
   onTasks: () => void
 }
 
-export function Sidebar({ vault, notes, currentId, onOpen, onCreate, onPickVault, onSearch, inboxCount, inboxOpen, graphOpen, tasksOpen, openTasks, onInbox, onToday, onGraph, onTasks }: Props) {
+export function Sidebar({ vault, notes, currentId, onOpen, onCreate, onCreateFromTemplate, onPickVault, onSearch, inboxCount, inboxOpen, graphOpen, tasksOpen, openTasks, onInbox, onToday, onGraph, onTasks }: Props) {
   const [filter, setFilter] = useState('')
   const [newTitle, setNewTitle] = useState('')
 
@@ -82,6 +83,9 @@ export function Sidebar({ vault, notes, currentId, onOpen, onCreate, onPickVault
         <input value={newTitle} onChange={(e) => setNewTitle(e.target.value)} placeholder="New note title…" aria-label="New note title" />
         <button type="submit" className="icon-btn" title="Create note (Ctrl+N)" disabled={!newTitle.trim()}>
           <FilePlus2 size={16} />
+        </button>
+        <button type="button" className="icon-btn" title="New from template: project, research, decision… (Ctrl+Shift+N)" onClick={onCreateFromTemplate}>
+          <LayoutTemplate size={16} />
         </button>
       </form>
       <input className="sidebar__filter" value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter notes" aria-label="Filter notes" />

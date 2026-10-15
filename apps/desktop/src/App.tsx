@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
-import { CalendarDays, Columns2, FilePlus2, FolderOpen, Inbox, ListChecks, Locate, RefreshCw, Search, SquareKanban, Trash2, Waypoints, X, Zap } from 'lucide-react'
+import { ArrowUpRight, CalendarDays, Columns2, FilePlus2, FolderOpen, Inbox, LayoutTemplate, ListChecks, Locate, RefreshCw, Search, SquareKanban, Trash2, Waypoints, X, Zap } from 'lucide-react'
 import { insertAttachments, type AttachmentItem, type Editor } from '@graphite/ui'
 import { api, assetUrl, INBOX_DIR, type Note, type NoteSummary, type VaultInfo } from './api'
 import { Sidebar } from './components/Sidebar'
@@ -10,6 +10,8 @@ import { Pane } from './components/Pane'
 import { InboxView } from './components/InboxView'
 import { TasksView } from './components/TasksView'
 import { SavedQueryTab } from './components/SavedQueryTab'
+import { ProjectHub } from './components/ProjectHub'
+import { TemplatePicker } from './components/TemplatePicker'
 import type { ViewKind } from './components/QueryView'
 import { ContextPanel } from './components/ContextPanel'
 import { GraphView, type GraphMode } from './components/GraphView'
@@ -37,8 +39,11 @@ export function App() {
   const [saved, setSaved] = useState<Note | null>(null)
   /** Open tasks across the vault, for the sidebar badge. */
   const [openTasks, setOpenTasks] = useState(0)
-  /** Query notes the user chose to see as text rather than as results. */
-  const [editingQueries, setEditingQueries] = useState<Set<string>>(() => new Set())
+  /** Query and project notes the user chose to see as text rather than as a view. */
+  const [editingNotes, setEditingNotes] = useState<Set<string>>(() => new Set())
+  const [picker, setPicker] = useState<{ kind: 'create' } | { kind: 'promote'; noteId: string; title: string } | null>(null)
+  /** Front-matter edits from the context panel, for the note tab to save. */
+  const [patch, setPatch] = useState<{ id: string; patch: Partial<Note>; seq: number } | null>(null)
   const activeEditor = useRef<Editor | null>(null)
   const layoutRef = useRef(layout)
   layoutRef.current = layout
@@ -164,6 +169,17 @@ export function App() {
       }
     },
     [openNote, refreshList],
+  )
+
+  const editAsNote = useCallback((id: string) => setEditingNotes((set) => new Set(set).add(id)), [])
+  const showAsView = useCallback(
+    (id: string) =>
+      setEditingNotes((set) => {
+        const next = new Set(set)
+        next.delete(id)
+        return next
+      }),
+    [],
   )
 
   /** Turn a query into a `type: query` note and open it. */
@@ -299,6 +315,7 @@ export function App() {
         if (key === 'p') act(() => setPalette({ mode: 'commands', newTab: false }))
         else if (key === 'g') act(() => showGraph(lastNote && active.kind !== 'graph' ? 'local' : 'global'))
         else if (key === 't') act(() => openTasksView())
+        else if (key === 'n') act(() => setPicker({ kind: 'create' }))
         else if (key === 'tab') act(() => setLayout((l) => L.cycleTab(l, -1)))
         return
       }
@@ -319,6 +336,9 @@ export function App() {
     () => [
       { id: 'search', label: 'Search notes', shortcut: 'Ctrl+K', icon: <Search size={16} />, run: () => setPalette({ mode: 'notes', newTab: false }) },
       { id: 'new', label: 'New note', shortcut: 'Ctrl+N', icon: <FilePlus2 size={16} />, run: () => void createNote(`Untitled ${new Date().toLocaleString()}`) },
+      { id: 'new-template', label: 'New note from template…', shortcut: 'Ctrl+Shift+N', icon: <LayoutTemplate size={16} />, keywords: 'project research build software writing decision', run: () => setPicker({ kind: 'create' }) },
+      ...(activeNote && activeNote.type !== 'project' ? [{ id: 'promote', label: `Promote “${activeNote.title}” to a project…`, icon: <ArrowUpRight size={16} />, keywords: 'idea convert template', run: () => setPicker({ kind: 'promote', noteId: activeNote.id, title: activeNote.title }) }] : []),
+      ...(activeNote && (activeNote.type === 'project' || activeNote.type === 'query') ? [{ id: 'as-view', label: activeNote.type === 'project' ? 'Show project hub' : 'Show query results', icon: <SquareKanban size={16} />, run: () => showAsView(activeNote.id) }] : []),
       { id: 'today', label: "Open today's daily note", shortcut: 'Ctrl+D', icon: <CalendarDays size={16} />, keywords: 'daily journal', run: () => void openToday() },
       { id: 'inbox', label: 'Show inbox', icon: <Inbox size={16} />, keywords: 'triage captures', run: () => openInbox() },
       { id: 'tasks', label: 'Show tasks', shortcut: 'Ctrl+Shift+T', icon: <ListChecks size={16} />, keywords: 'todo tracker gaps questions board', run: () => openTasksView() },
@@ -333,7 +353,7 @@ export function App() {
       { id: 'vault', label: 'Open another vault folder', icon: <FolderOpen size={16} />, keywords: 'switch', run: () => void pickVault() },
       { id: 'reindex', label: 'Rebuild the search index', icon: <RefreshCw size={16} />, keywords: 'reindex repair', run: () => void api.rebuildIndex().then(refreshList).catch((e) => setError(String(e))) },
     ],
-    [createNote, openToday, openInbox, openTasksView, saveQuery, showGraph, lastNote, activeNote, deleteNote, pickVault, refreshList],
+    [createNote, openToday, openInbox, openTasksView, saveQuery, showAsView, showGraph, lastNote, activeNote, deleteNote, pickVault, refreshList],
   )
 
   if (!vault) return <Welcome onPick={pickVault} error={error} />
@@ -343,19 +363,13 @@ export function App() {
 
   const body = (tab: L.Tab, isActive: boolean) => {
     switch (tab.kind) {
-      case 'note':
-        if (notes.find((n) => n.id === tab.noteId)?.type === 'query' && !editingQueries.has(tab.noteId)) {
-          return (
-            <SavedQueryTab
-              key={tab.id}
-              noteId={tab.noteId}
-              version={version}
-              onOpen={openNote}
-              onChanged={() => void refreshList()}
-              onError={setError}
-              onEdit={() => setEditingQueries((s) => new Set(s).add(tab.noteId))}
-            />
-          )
+      case 'note': {
+        const type = notes.find((n) => n.id === tab.noteId)?.type
+        if (type === 'query' && !editingNotes.has(tab.noteId)) {
+          return <SavedQueryTab key={tab.id} noteId={tab.noteId} version={version} onOpen={openNote} onChanged={() => void refreshList()} onError={setError} onEdit={() => editAsNote(tab.noteId)} />
+        }
+        if (type === 'project' && !editingNotes.has(tab.noteId)) {
+          return <ProjectHub key={tab.id} noteId={tab.noteId} version={version} onOpen={openNote} onChanged={() => void refreshList()} onError={setError} onEdit={() => editAsNote(tab.noteId)} />
         }
         return (
           <NoteTab
@@ -364,6 +378,7 @@ export function App() {
             active={isActive}
             changed={changed}
             saved={saved}
+            patch={patch}
             onActiveNote={(n) => {
               setActiveNote(n)
               if (n) setLastNote(n)
@@ -382,6 +397,7 @@ export function App() {
             pickImage={pickImage}
           />
         )
+      }
       case 'inbox':
         return <InboxView key={tab.id} notes={notes} onOpen={(id) => openNote(id)} onChanged={() => void refreshList()} onError={setError} />
       case 'tasks':
@@ -409,6 +425,7 @@ export function App() {
         currentId={active.kind === 'note' ? active.noteId : null}
         onOpen={openNote}
         onCreate={(t) => void createNote(t)}
+        onCreateFromTemplate={() => setPicker({ kind: 'create' })}
         onPickVault={pickVault}
         onSearch={() => setPalette({ mode: 'notes', newTab: false })}
         inboxCount={inboxCount}
@@ -442,7 +459,27 @@ export function App() {
           )
         })}
       </main>
-      {showContext && <ContextPanel note={activeNote} onOpen={(id) => openNote(id)} onFollowLink={(t) => void followLink(t)} onShowGraph={() => showGraph('local', true)} />}
+      {showContext && (
+        <ContextPanel
+          note={activeNote}
+          onOpen={(id) => openNote(id)}
+          onFollowLink={(t) => void followLink(t)}
+          onShowGraph={() => showGraph('local', true)}
+          onEdit={(p) => setPatch((prev) => ({ id: activeNote.id, patch: p, seq: (prev?.seq ?? 0) + 1 }))}
+        />
+      )}
+      {picker && (
+        <TemplatePicker
+          mode={picker}
+          onClose={() => setPicker(null)}
+          onError={setError}
+          onDone={(id) => {
+            setPicker(null)
+            showAsView(id)
+            void refreshList().then(() => openNote(id))
+          }}
+        />
+      )}
       {palette && (
         <Palette
           mode={palette.mode}

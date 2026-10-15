@@ -1,6 +1,7 @@
 import type { JSONContent } from '@tiptap/core'
 import { MarkdownManager } from '@tiptap/markdown'
 import { buildMarkdownExtensions } from './extensions'
+import { prepareTaskMarkers } from './blocks/taskItem'
 
 let manager: MarkdownManager | null = null
 
@@ -11,7 +12,7 @@ function getManager(): MarkdownManager {
 
 /** Markdown → Tiptap JSON, without an editor instance (used by tests and tools). */
 export function markdownToDoc(markdown: string): JSONContent {
-  return getManager().parse(markdown)
+  return getManager().parse(prepareTaskMarkers(markdown))
 }
 
 /** Tiptap JSON → Markdown. */
