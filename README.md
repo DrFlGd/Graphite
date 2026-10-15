@@ -12,7 +12,7 @@ Milestone **M0 (foundations)** and the capture half of **M1**: a desktop app tha
 
 Installers for Windows (`.msi` / setup `.exe`), macOS (universal `.dmg`) and Linux (`.AppImage`, `.deb`, `.rpm`), plus the CLI, are on the [releases page](https://github.com/DrFlGd/Graphite/releases). The builds are not code-signed yet, so the OS will warn on first launch: on macOS run `xattr -cr /Applications/Graphite.app` once (or right-click the app and choose Open); on Windows choose "More info" then "Run anyway" in the SmartScreen prompt.
 
-A release is cut by pushing a version tag (`git tag v0.1.0 && git push origin v0.1.0`); `.github/workflows/release.yml` builds the installers and publishes them.
+A release is cut by pushing a version tag (`git tag v0.1.0 && git push origin v0.1.0`) or by running the Release workflow from the Actions tab with the version number; `.github/workflows/release.yml` creates the tag if needed, builds the installers and publishes them.
 
 ## Repository
 
