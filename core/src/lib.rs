@@ -7,6 +7,7 @@
 pub mod attachments;
 pub mod capture;
 pub mod error;
+pub mod graph;
 pub mod index;
 pub mod links;
 pub mod note;
@@ -15,6 +16,7 @@ pub mod watcher;
 
 pub use capture::{capture_title, is_url, DAILY_DIR, INBOX_DIR};
 pub use error::{Error, Result};
+pub use graph::{Graph, GraphEdge, GraphNode};
 pub use index::{Backlink, SearchHit};
 pub use links::{Link, LinkKind};
 pub use note::{Note, NoteSummary};

@@ -1,26 +1,32 @@
 import { Fragment, useEffect, useState, type ReactNode } from 'react'
-import { api, type Backlink, type Note, type NoteSummary, type Outgoing } from '../api'
+import { Maximize2 } from 'lucide-react'
+import { api, type Backlink, type Graph, type Note, type NoteSummary, type Outgoing } from '../api'
+import { GraphCanvas } from './GraphCanvas'
 
 interface Props {
   note: Note
   onOpen: (id: string) => void
   onFollowLink: (target: string) => void
+  /** Show the full graph view centred on this note. */
+  onShowGraph: () => void
 }
 
 /** Right-hand panel: backlinks, outgoing links, unlinked mentions, properties. */
-export function ContextPanel({ note, onOpen, onFollowLink }: Props) {
+export function ContextPanel({ note, onOpen, onFollowLink, onShowGraph }: Props) {
   const [backlinks, setBacklinks] = useState<Backlink[]>([])
   const [outgoing, setOutgoing] = useState<Outgoing[]>([])
   const [mentions, setMentions] = useState<NoteSummary[]>([])
+  const [graph, setGraph] = useState<Graph>({ nodes: [], edges: [] })
 
   useEffect(() => {
     let cancelled = false
     const load = async () => {
-      const [b, o, m] = await Promise.all([api.backlinks(note.id), api.outgoingLinks(note.id), api.unlinkedMentions(note.id)])
+      const [b, o, m, g] = await Promise.all([api.backlinks(note.id), api.outgoingLinks(note.id), api.unlinkedMentions(note.id), api.localGraph(note.id, 1)])
       if (cancelled) return
       setBacklinks(b)
       setOutgoing(o)
       setMentions(m)
+      setGraph(g)
     }
     void load().catch(() => {})
     return () => {
@@ -33,6 +39,20 @@ export function ContextPanel({ note, onOpen, onFollowLink }: Props) {
 
   return (
     <aside className="context">
+      <Section
+        title="Graph"
+        action={
+          <button type="button" className="icon-btn" title="Open the graph view" onClick={onShowGraph}>
+            <Maximize2 size={14} />
+          </button>
+        }
+      >
+        {graph.nodes.length > 1 ? (
+          <GraphCanvas graph={graph} focusId={note.id} compact className="context__graph" onOpen={(n) => (n.missing ? onFollowLink(n.title) : onOpen(n.id))} />
+        ) : (
+          <p className="context__empty">Links in and out will be drawn here.</p>
+        )}
+      </Section>
       <Section title={`Backlinks (${backlinks.length})`}>
         {backlinks.length === 0 && <p className="context__empty">Nothing links here yet.</p>}
         {backlinks.map((b, i) => (
@@ -96,10 +116,13 @@ export function ContextPanel({ note, onOpen, onFollowLink }: Props) {
 }
 
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
+function Section({ title, action, children }: { title: string; action?: ReactNode; children: ReactNode }) {
   return (
     <section className="context__section">
-      <h3>{title}</h3>
+      <div className="context__section-head">
+        <h3>{title}</h3>
+        {action}
+      </div>
       {children}
     </section>
   )

@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use graphite_core::{Backlink, Note, NoteSummary, SearchHit, Vault, VaultInfo, Watcher};
+use graphite_core::{Backlink, Graph, Note, NoteSummary, SearchHit, Vault, VaultInfo, Watcher};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -136,6 +136,16 @@ fn outgoing_links(state: State<AppState>, id: String) -> CmdResult<Vec<Outgoing>
 
 /// Follow a `[[link]]`: returns the id, creating the note if it does not exist.
 #[tauri::command]
+fn graph(state: State<AppState>) -> CmdResult<Graph> {
+    with_vault(&state, |v| v.graph())
+}
+
+#[tauri::command]
+fn local_graph(state: State<AppState>, id: String, hops: Option<usize>) -> CmdResult<Graph> {
+    with_vault(&state, |v| v.local_graph(&id, hops.unwrap_or(1).clamp(1, 4)))
+}
+
+#[tauri::command]
 fn follow_link(state: State<AppState>, target: String) -> CmdResult<String> {
     with_vault(&state, |v| v.resolve_or_create(&target))
 }
@@ -208,6 +218,12 @@ fn hide_capture_window(app: AppHandle) -> CmdResult<()> {
     Ok(())
 }
 
+/// Show or hide the quick-capture window (same as the global shortcut).
+#[tauri::command]
+fn toggle_capture_window(app: AppHandle) {
+    toggle_capture_window_impl(&app);
+}
+
 /// Bring the main window forward and open a note there (from the capture window).
 #[tauri::command]
 fn open_in_main(app: AppHandle, id: String) -> CmdResult<()> {
@@ -223,7 +239,7 @@ const CAPTURE_WINDOW: &str = "capture";
 pub const CAPTURE_SHORTCUT: &str = "CmdOrCtrl+Shift+Space";
 
 /// Show the capture window (or hide it if it is already in front).
-fn toggle_capture_window(app: &AppHandle) {
+fn toggle_capture_window_impl(app: &AppHandle) {
     let Some(w) = app.get_webview_window(CAPTURE_WINDOW) else {
         tracing::warn!("no capture window");
         return;
@@ -248,7 +264,7 @@ pub fn run() {
     let shortcuts = tauri_plugin_global_shortcut::Builder::new()
         .with_handler(|app, _shortcut, event| {
             if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
-                toggle_capture_window(app);
+                toggle_capture_window_impl(app);
             }
         })
         .with_shortcut(CAPTURE_SHORTCUT)
@@ -282,6 +298,8 @@ pub fn run() {
             backlinks,
             unlinked_mentions,
             outgoing_links,
+            graph,
+            local_graph,
             follow_link,
             complete_title,
             rebuild_index,
@@ -293,6 +311,7 @@ pub fn run() {
             set_note_type,
             folders,
             hide_capture_window,
+            toggle_capture_window,
             open_in_main,
         ])
         .run(tauri::generate_context!())

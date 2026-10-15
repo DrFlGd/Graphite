@@ -84,7 +84,7 @@ pub struct Backlink {
 }
 
 pub struct Index {
-    conn: Connection,
+    pub(crate) conn: Connection,
 }
 
 impl Index {

@@ -45,6 +45,28 @@ export interface Outgoing {
   id: string | null
 }
 
+export interface GraphNode {
+  id: string
+  title: string
+  type: string
+  path: string
+  /** A link target no note resolves to; opening it creates the note. */
+  missing: boolean
+}
+
+export interface GraphEdge {
+  from: string
+  to: string
+  relation: string | null
+  kind: 'wiki' | 'embed'
+  count: number
+}
+
+export interface Graph {
+  nodes: GraphNode[]
+  edges: GraphEdge[]
+}
+
 export const api = {
   openVault: (path: string) => invoke<VaultInfo>('open_vault', { path }),
   vaultInfo: () => invoke<VaultInfo | null>('vault_info'),
@@ -58,6 +80,8 @@ export const api = {
   unlinkedMentions: (id: string) => invoke<NoteSummary[]>('unlinked_mentions', { id }),
   outgoingLinks: (id: string) => invoke<Outgoing[]>('outgoing_links', { id }),
   followLink: (target: string) => invoke<string>('follow_link', { target }),
+  graph: () => invoke<Graph>('graph'),
+  localGraph: (id: string, hops = 1) => invoke<Graph>('local_graph', { id, hops }),
   completeTitle: (prefix: string) => invoke<NoteSummary[]>('complete_title', { prefix }),
   rebuildIndex: () => invoke<number>('rebuild_index'),
   attachFile: (src: string, folder?: string) => invoke<string>('attach_file', { src, folder }),
@@ -68,6 +92,7 @@ export const api = {
   setNoteType: (id: string, noteType: string) => invoke<Note>('set_note_type', { id, noteType }),
   folders: () => invoke<string[]>('folders'),
   hideCaptureWindow: () => invoke<void>('hide_capture_window'),
+  toggleCaptureWindow: () => invoke<void>('toggle_capture_window'),
   openInMain: (id: string) => invoke<void>('open_in_main', { id }),
   /** The capture window was shown by the global shortcut. */
   onCaptureShown: (cb: () => void): Promise<UnlistenFn> => listen('capture://shown', () => cb()),
