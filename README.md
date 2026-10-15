@@ -10,7 +10,7 @@ Milestone **M0 (foundations)** and the capture half of **M1**: a desktop app tha
 
 ## Install
 
-Installers for Windows (`.msi` / setup `.exe`) and Linux (`.AppImage`, `.deb`, `.rpm`), plus the CLI, are on the [releases page](https://github.com/DrFlGd/Graphite/releases). macOS builds are switched off in the release workflow for now (nobody needs them yet); the app builds and runs there from source. The builds are not code-signed yet, so Windows will warn on first launch: choose "More info" then "Run anyway" in the SmartScreen prompt.
+Installers for Windows (`.msi` / setup `.exe`) and Linux (`.AppImage`, `.deb`, `.rpm`), the CLI, the sync relay (`graphite-relay`, Linux) and an Android APK (arm64) are on the [releases page](https://github.com/DrFlGd/Graphite/releases). The APK is signed with a key made for each build, so Android will ask you to allow installing from a browser or file manager, and a newer release installs over an older one only after uninstalling it. macOS builds are switched off in the release workflow for now (nobody needs them yet); the app builds and runs there from source. The builds are not code-signed yet, so Windows will warn on first launch: choose "More info" then "Run anyway" in the SmartScreen prompt.
 
 A release is cut by pushing a version tag (`git tag v0.1.0 && git push origin v0.1.0`) or by running the Release workflow from the Actions tab with the version number; `.github/workflows/release.yml` creates the tag if needed, builds the installers and publishes them, using `docs/releases/<tag>.md` as the release notes when that file exists.
 
@@ -20,7 +20,8 @@ A release is cut by pushing a version tag (`git tag v0.1.0 && git push origin v0
 | --- | --- |
 | `core/` | Rust crate: vault model, front-matter, links, SQLite/FTS index, file watcher |
 | `apps/cli/` | `graphite` command-line tool |
-| `apps/desktop/` | Tauri 2 desktop app (Rust shell in `src-tauri/`, React UI in `src/`) |
+| `apps/desktop/` | Tauri 2 app for desktop and Android (Rust shell in `src-tauri/`, React UI in `src/`, Android project in `src-tauri/gen/android/`) |
+| `apps/relay/` | `graphite-relay`: self-hosted sync relay (stores only encrypted objects) |
 | `packages/ui/` | Shared React components: the note editor and its block registry |
 | `fixtures/sample-vault/` | A small vault to try things on |
 | `docs/` | Plan, specs, ADRs |
@@ -41,6 +42,8 @@ GRAPHITE_VAULT=fixtures/sample-vault target/debug/graphite capture "Look into br
 GRAPHITE_VAULT=fixtures/sample-vault target/debug/graphite daily
 GRAPHITE_VAULT=fixtures/sample-vault target/debug/graphite graph --around "Garden Robot" --hops 2
 ```
+
+To build the Android app: install Android Studio's SDK and NDK (set `ANDROID_HOME` and `NDK_HOME`), add the Rust target (`rustup target add aarch64-linux-android`), then `pnpm --filter @graphite/desktop tauri android dev` for a connected phone or `… tauri android build --apk --target aarch64` for an APK (`scripts/sign-apk.sh` signs it the way CI does). On a phone the vault lives in the app's private storage and syncs through a relay (sidebar gear on a desktop, or the settings icon on the phone): run `graphite-relay` somewhere both can reach, create a key on one device, paste the invite on the other.
 
 Open `fixtures/sample-vault` (or any folder) from the app's welcome screen. Shortcuts: `Ctrl/Cmd+Shift+Space` quick capture (works while the app is in the background), `Ctrl/Cmd+K` search, `Ctrl/Cmd+Shift+P` commands (or type `>` in search), `Ctrl/Cmd+N` new note, `Ctrl/Cmd+D` today's note, `Ctrl/Cmd+Shift+G` graph, `Ctrl/Cmd+T` open a note in a new tab, `Ctrl/Cmd+W` close tab, `Ctrl/Cmd+Tab` next tab, `Ctrl/Cmd+\` split the pane, `Ctrl/Cmd+1`-`3` focus a pane, `/` in a note for blocks, `[[` to link. Drop or paste files into a note to attach them.
 

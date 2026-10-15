@@ -247,11 +247,8 @@ struct Client {
 
 impl Client {
     fn new(config: &RelayConfig) -> Result<Client> {
-        let tls = ureq::tls::TlsConfig::builder()
-            .root_certs(ureq::tls::RootCerts::PlatformVerifier)
-            .build();
         let agent: ureq::Agent = ureq::Agent::config_builder()
-            .tls_config(tls)
+            .tls_config(crate::sources::tls_config())
             .user_agent("graphite")
             .timeout_global(Some(Duration::from_secs(600)))
             .http_status_as_error(true)

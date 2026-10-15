@@ -27,6 +27,13 @@ export interface Note extends NoteSummary {
   body: string
 }
 
+/** One share-sheet hand-over: text and/or files copied into the app's storage. */
+export interface Shared {
+  text: string
+  subject: string
+  files: string[]
+}
+
 export interface SearchHit {
   id: string
   path: string
@@ -383,6 +390,12 @@ export const api = {
   attachFile: (src: string, folder?: string) => invoke<string>('attach_file', { src, folder }),
   attachData: (name: string, dataBase64: string, folder?: string) => invoke<string>('attach_data', { name, dataBase64, folder }),
   capture: (text: string, attachments: string[]) => invoke<Note>('capture', { text, attachments }),
+  /** `android`, `ios`, `linux`, `macos` or `windows`. */
+  platform: () => invoke<string>('platform'),
+  /** The vault a phone opens without asking (in the app's private storage). */
+  defaultVault: () => invoke<string>('default_vault'),
+  /** What other apps shared into Graphite since the last call (phone share sheet). */
+  takeShared: () => invoke<Shared[]>('take_shared'),
   dailyNote: () => invoke<Note>('daily_note'),
   moveNote: (id: string, folder: string) => invoke<Note>('move_note', { id, folder }),
   setNoteType: (id: string, noteType: string) => invoke<Note>('set_note_type', { id, noteType }),
