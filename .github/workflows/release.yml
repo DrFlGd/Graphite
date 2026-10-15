@@ -186,12 +186,12 @@ jobs:
       # The workflow's own ref, not the tag: release notes may be added to the
       # default branch after the tag was cut.
       - uses: actions/checkout@v4
-      - name: Remove assets that are not installers or CLI archives
+      - name: Remove assets that are not installers, CLI, relay or Android archives
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' \
-            | grep -Ev '^(Graphite[_-]|graphite-cli-)' \
+            | grep -Ev '^(Graphite[_-]|graphite-cli-|graphite-relay-|graphite-v[0-9][^ ]*-android-)' \
             | while read -r name; do
                 echo "removing stray asset $name"
                 gh release delete-asset "$TAG" "$name" --repo "$GITHUB_REPOSITORY" --yes
