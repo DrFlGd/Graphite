@@ -3,6 +3,7 @@ import { ChevronRight, Download, FileText, Plus } from 'lucide-react'
 import { api, type AssetHit, type SearchHit } from '../api'
 import { KindIcon } from './FilesView'
 import { looksLikeUrl, shortUrl } from './sources'
+import { snippetParts } from '../snippet'
 
 export interface Command {
   id: string
@@ -160,6 +161,5 @@ function filterCommands(commands: Command[], text: string): Command[] {
 
 /** The index wraps matches in `[` `]`; show them emphasised. */
 function renderSnippet(s: string) {
-  const parts = s.split(/(\[[^\]]*\])/g)
-  return parts.map((p, i) => (p.startsWith('[') && p.endsWith(']') ? <mark key={i}>{p.slice(1, -1)}</mark> : <span key={i}>{p}</span>))
+  return snippetParts(s).map((p, i) => (p.match ? <mark key={i}>{p.text}</mark> : <span key={i}>{p.text}</span>))
 }

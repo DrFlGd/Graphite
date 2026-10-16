@@ -24,6 +24,8 @@ export interface NoteEditorProps {
   blockContext?: BlockContext
   placeholder?: string
   editable?: boolean
+  /** The note's title shown above the editor; a first `# heading` repeating it is hidden. */
+  title?: string
   /** Rendered at the right end of the toolbar. */
   toolbarTrailing?: ReactNode
   autofocus?: boolean
@@ -43,7 +45,7 @@ export interface NoteEditorProps {
  * out (ADR-005).
  */
 export function NoteEditor(props: NoteEditorProps) {
-  const { markdown, docKey, onChange, onFollowLink, onOpenFile, onOpenUrl, searchNotes, resolveSrc, blockContext, placeholder, editable = true, toolbarTrailing, autofocus, onReady, onFiles } = props
+  const { markdown, docKey, onChange, onFollowLink, onOpenFile, onOpenUrl, searchNotes, resolveSrc, blockContext, placeholder, editable = true, title, toolbarTrailing, autofocus, onReady, onFiles } = props
   const lastEmitted = useRef<string>(markdown)
   /**
    * The editor's own serialisation of the text it last loaded. Parsing and
@@ -52,6 +54,8 @@ export function NoteEditor(props: NoteEditorProps) {
    * that, so updates that still serialise to this are not edits.
    */
   const loaded = useRef<{ markdown: string | null; edited: boolean }>({ markdown: null, edited: false })
+  const titleRef = useRef(title)
+  titleRef.current = title
   const context = useMemo<BlockContext>(() => blockContext ?? {}, [blockContext])
   const callbacks = useRef({ onChange, onFollowLink, onOpenFile, onOpenUrl, searchNotes, onReady, onFiles })
   callbacks.current = { onChange, onFollowLink, onOpenFile, onOpenUrl, searchNotes, onReady, onFiles }
@@ -62,6 +66,7 @@ export function NoteEditor(props: NoteEditorProps) {
         placeholder,
         resolveSrc,
         blockContext: context,
+        title: () => titleRef.current,
         searchNotes: (q) => callbacks.current.searchNotes?.(q) ?? Promise.resolve([]),
       }),
     // Extensions are built once per document; options that change are read through refs.
@@ -157,6 +162,11 @@ export function NoteEditor(props: NoteEditorProps) {
   useEffect(() => {
     if (editor && !editor.isDestroyed) editor.setEditable(editable, false)
   }, [editable, editor])
+
+  // Redraw so the duplicate-title decoration follows title edits.
+  useEffect(() => {
+    if (editor && !editor.isDestroyed) editor.view.dispatch(editor.state.tr.setMeta('titleChanged', true))
+  }, [title, editor])
 
   useEffect(() => {
     if (editor && !editor.isDestroyed) callbacks.current.onReady?.(editor)

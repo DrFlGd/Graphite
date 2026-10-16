@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 import { NoteEditor, ToolButton, type Editor, type NoteCandidate } from '@graphite/ui'
 import { FileCode2, History, Trash2 } from 'lucide-react'
 import { api, type Note } from '../api'
@@ -35,13 +35,7 @@ export function NotePane({ note, saveState, onChange, onFollowLink, onOpenFile, 
   return (
     <div className="note">
       <header className="note__header">
-        <input
-          className="note__title"
-          value={note.title}
-          onChange={(e) => onChange({ ...note, title: e.target.value })}
-          aria-label="Title"
-          placeholder="Untitled"
-        />
+        <TitleField value={note.title} onChange={(title) => onChange({ ...note, title })} />
         <div className="note__meta">
           <span className="note__path" title={note.path}>
             {note.path}
@@ -75,6 +69,7 @@ export function NotePane({ note, saveState, onChange, onFollowLink, onOpenFile, 
         <NoteEditor
           docKey={note.id}
           markdown={note.body}
+          title={note.title}
           onChange={(body) => onChange({ ...note, body })}
           onFollowLink={(target) => onFollowLink(target)}
           onOpenFile={onOpenFile}
@@ -136,5 +131,43 @@ function TagRow({ tags, onChange }: { tags: string[]; onChange: (tags: string[])
         className="note__tag-input"
       />
     </div>
+  )
+}
+
+/** The note title: one logical line that wraps instead of clipping. */
+function TitleField({ value, onChange }: { value: string; onChange: (title: string) => void }) {
+  const ref = useRef<HTMLTextAreaElement>(null)
+  const fit = () => {
+    const el = ref.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${el.scrollHeight}px`
+  }
+  useLayoutEffect(fit, [value])
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(fit)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  return (
+    <textarea
+      ref={ref}
+      className="note__title"
+      rows={1}
+      value={value}
+      onChange={(e) => onChange(e.target.value.replace(/[\r\n]+/g, ' '))}
+      onKeyDown={(e) => {
+        // Enter moves on to the text rather than adding a line to the title.
+        if (e.key === 'Enter') {
+          e.preventDefault()
+          ;(e.currentTarget.closest('.note')?.querySelector('.ProseMirror') as HTMLElement | null)?.focus()
+        }
+      }}
+      aria-label="Title"
+      placeholder="Untitled"
+      spellCheck
+    />
   )
 }

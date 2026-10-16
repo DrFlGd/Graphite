@@ -131,8 +131,8 @@ export function AssetView({ path, vaultRoot, page, version, onOpenNote, onNoteCr
           <button type="button" className="btn" onClick={copyLink} title="Copy a Markdown link to paste into a note">
             <Copy size={14} /> Copy link
           </button>
-          <button type="button" className="btn" onClick={createNote} title="Create a note about this file (type: asset)">
-            <FilePlus2 size={14} /> Note
+          <button type="button" className="btn" onClick={createNote} title="New note about this file">
+            <FilePlus2 size={14} /> New note
           </button>
           <button type="button" className="icon-btn" onClick={() => act(() => api.deriveAsset(path))} title="Regenerate preview and metadata">
             <RefreshCw size={14} />

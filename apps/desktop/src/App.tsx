@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
-import { Archive, ArrowUpRight, Settings2, CalendarDays, Columns2, Download, FilePlus2, FolderOpen, Inbox, LayoutTemplate, ListChecks, Locate, Paperclip, RefreshCw, Search, SquareKanban, Trash2, Waypoints, X, Zap } from 'lucide-react'
+import { Archive, ArrowUpRight, Settings2, CalendarDays, Columns2, Download, FilePlus2, FolderOpen, Inbox, LayoutTemplate, ListChecks, Locate, PanelLeft, PanelRight, Paperclip, RefreshCw, Search, SquareKanban, Trash2, Waypoints, X, Zap } from 'lucide-react'
 import { insertAttachments, type AttachmentItem, type Editor } from '@graphite/ui'
 import { api, assetUrl, decodePath, INBOX_DIR, type Note, type NoteSummary, type SyncStatus, type VaultInfo } from './api'
 import { Sidebar } from './components/Sidebar'
@@ -26,6 +26,31 @@ import { Welcome } from './components/Welcome'
 import * as L from './layout'
 
 const LAST_VAULT_KEY = 'graphite.lastVault'
+
+/** A boolean kept in localStorage (window-layout preferences only). */
+function useStoredFlag(key: string): [boolean, (f: (v: boolean) => boolean) => void] {
+  const [value, setValue] = useState(() => {
+    try {
+      return localStorage.getItem(key) === '1'
+    } catch {
+      return false
+    }
+  })
+  const update = useCallback(
+    (f: (v: boolean) => boolean) =>
+      setValue((v) => {
+        const next = f(v)
+        try {
+          localStorage.setItem(key, next ? '1' : '0')
+        } catch {
+          // Preference only; ignore storage errors.
+        }
+        return next
+      }),
+    [key],
+  )
+  return [value, update]
+}
 const layoutKey = (root: string) => `graphite.layout:${root}`
 
 export function App() {
@@ -43,6 +68,9 @@ export function App() {
   const [notice, setNotice] = useState<string | null>(null)
   /** Bumped when notes change so views that derive from the index refetch. */
   const [version, setVersion] = useState(0)
+  // Hidden side bars give the editor the whole window; remembered per machine.
+  const [hideSidebar, setHideSidebar] = useStoredFlag('graphite.hideSidebar')
+  const [hidePanel, setHidePanel] = useStoredFlag('graphite.hidePanel')
   /** Bumped when files or their previews change on disk. */
   const [assetVersion, setAssetVersion] = useState(0)
   const [changed, setChanged] = useState<{ ids: string[]; seq: number }>({ ids: [], seq: 0 })
@@ -527,19 +555,22 @@ export function App() {
       ...(lastNote ? [{ id: 'graph-local', label: `Show graph around “${lastNote.title}”`, icon: <Locate size={16} />, keywords: 'local links', run: () => showGraph('local') }] : []),
       { id: 'tab-new', label: 'Open a note in a new tab', shortcut: 'Ctrl+T', keywords: 'tab', run: () => setPalette({ mode: 'notes', newTab: true }) },
       { id: 'tab-close', label: 'Close tab', shortcut: 'Ctrl+W', icon: <X size={16} />, run: () => setLayout(L.closeActiveTab) },
+      { id: 'toggle-sidebar', label: hideSidebar ? 'Show sidebar' : 'Hide sidebar', icon: <PanelLeft size={16} />, keywords: 'focus wide layout', run: () => setHideSidebar((h) => !h) },
+      { id: 'toggle-panel', label: hidePanel ? 'Show side panel' : 'Hide side panel', icon: <PanelRight size={16} />, keywords: 'focus wide layout backlinks properties', run: () => setHidePanel((h) => !h) },
       { id: 'split', label: 'Split pane to the right', shortcut: 'Ctrl+\\', icon: <Columns2 size={16} />, keywords: 'side by side columns', run: () => setLayout(L.splitRight) },
       { id: 'capture', label: 'Quick capture', shortcut: 'Ctrl+Shift+Space', icon: <Zap size={16} />, keywords: 'inbox thought', run: () => void api.toggleCaptureWindow() },
       ...(activeNote ? [{ id: 'delete', label: `Delete “${activeNote.title}”`, icon: <Trash2 size={16} />, run: () => void deleteNote(activeNote) }] : []),
       { id: 'vault', label: 'Open another vault folder', icon: <FolderOpen size={16} />, keywords: 'switch', run: () => void pickVault() },
       { id: 'reindex', label: 'Rebuild the search index', icon: <RefreshCw size={16} />, keywords: 'reindex repair', run: () => void api.rebuildIndex().then(refreshList).catch((e) => setError(String(e))) },
     ],
-    [createNote, openToday, openInbox, openTasksView, openFiles, openSources, pickFile, saveQuery, showAsView, editAsNote, activeIsView, showGraph, lastNote, activeNote, deleteNote, pickVault, refreshList, syncNow, syncStatus, takeSnapshot],
+    [createNote, openToday, openInbox, openTasksView, openFiles, openSources, pickFile, saveQuery, showAsView, editAsNote, activeIsView, showGraph, lastNote, activeNote, deleteNote, pickVault, refreshList, syncNow, syncStatus, takeSnapshot, hideSidebar, hidePanel, setHideSidebar, setHidePanel],
   )
 
   if (!vault) return <Welcome onPick={pickVault} error={error} />
 
   const inboxCount = notes.filter((n) => n.path.startsWith(INBOX_DIR + '/')).length
-  const showContext = active.kind === 'note' && activeNote !== null && !activeIsView
+  const hasContext = active.kind === 'note' && activeNote !== null && !activeIsView
+  const showContext = hasContext && !hidePanel
 
   const body = (tab: L.Tab, isActive: boolean) => {
     switch (tab.kind) {
@@ -622,7 +653,8 @@ export function App() {
   }
 
   return (
-    <div className={`app ${showContext ? '' : 'app--no-context'}`}>
+    <div className={`app ${showContext ? '' : 'app--no-context'} ${hideSidebar ? 'app--no-sidebar' : ''}`}>
+      {!hideSidebar && (
       <Sidebar
         vault={vault}
         notes={notes}
@@ -651,6 +683,7 @@ export function App() {
         onFiles={() => openFiles()}
         onSources={() => openSources()}
       />
+      )}
       <main className="panes">
         {layout.panes.map((pane, pi) => {
           const paneActive = pi === layout.active
@@ -666,6 +699,21 @@ export function App() {
               onClose={(ti) => setLayout((l) => L.closeTab(l, pi, ti))}
               onNewTab={() => setPalette({ mode: 'notes', newTab: true })}
               onSplit={() => setLayout((l) => L.splitRight(L.focusPane(l, pi)))}
+              leading={
+                pi === 0 && (
+                  <button type="button" className={`icon-btn pane__action ${hideSidebar ? '' : 'is-on'}`} title={hideSidebar ? 'Show sidebar' : 'Hide sidebar'} aria-pressed={!hideSidebar} onClick={() => setHideSidebar((h) => !h)}>
+                    <PanelLeft size={14} />
+                  </button>
+                )
+              }
+              trailing={
+                pi === layout.panes.length - 1 &&
+                hasContext && (
+                  <button type="button" className={`icon-btn pane__action ${hidePanel ? '' : 'is-on'}`} title={hidePanel ? 'Show side panel' : 'Hide side panel'} aria-pressed={!hidePanel} onClick={() => setHidePanel((h) => !h)}>
+                    <PanelRight size={14} />
+                  </button>
+                )
+              }
             >
               {body(pane.tabs[pane.active], paneActive)}
             </Pane>

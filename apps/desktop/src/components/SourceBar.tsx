@@ -24,7 +24,8 @@ export function SourceBar({ note, onReplace, onOpenUrl, onError }: Props) {
   const kind = (str(p.source_type) ?? 'file') as SourceKind
   const folder = str(p.folder)
   const changed = p.update_available === true
-  const summary = str(p.update_summary)
+  // Older versions wrote "(have )" when no commit had been recorded.
+  const summary = str(p.update_summary)?.replace(/ \(have \)$/, '') ?? null
   const commit = str(p.commit)
 
   const check = async () => {

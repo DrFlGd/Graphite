@@ -307,10 +307,10 @@ fn run() -> Result<()> {
                 println!("{}", serde_json::json!({ "notes": hits, "files": files }));
             } else {
                 for h in hits {
-                    println!("{}  {}\n    {}", h.id, h.title, h.snippet.replace('\n', " "));
+                    println!("{}  {}\n    {}", h.id, h.title, plain_snippet(&h.snippet));
                 }
                 for f in files {
-                    println!("{}  {}\n    {}", f.kind.as_str(), f.path, f.snippet.replace('\n', " "));
+                    println!("{}  {}\n    {}", f.kind.as_str(), f.path, plain_snippet(&f.snippet));
                 }
             }
         }
@@ -985,4 +985,11 @@ fn resolve(vault: &Vault, target: &str) -> Result<String> {
     vault
         .resolve(target)?
         .with_context(|| format!("no note matches '{target}'"))
+}
+
+/// A search snippet for the terminal: matches in `[` `]`, one line.
+fn plain_snippet(s: &str) -> String {
+    s.replace(graphite_core::index::SNIPPET_START, "[")
+        .replace(graphite_core::index::SNIPPET_END, "]")
+        .replace('\n', " ")
 }
