@@ -30,14 +30,29 @@ export const DuplicateTitle = Extension.create<DuplicateTitleOptions>({
   addProseMirrorPlugins() {
     const { title } = this.options
     return [
-      new Plugin({
+      new Plugin<boolean>({
         key: duplicateTitleKey,
+        // Whether the editor has focus: the heading shows while the cursor is in it.
+        state: {
+          init: () => false,
+          apply: (tr, focused) => (tr.getMeta(duplicateTitleKey) as boolean | undefined) ?? focused,
+        },
         props: {
+          handleDOMEvents: {
+            focus: (view) => {
+              view.dispatch(view.state.tr.setMeta(duplicateTitleKey, true))
+              return false
+            },
+            blur: (view) => {
+              view.dispatch(view.state.tr.setMeta(duplicateTitleKey, false))
+              return false
+            },
+          },
           decorations(state) {
             const { doc, selection } = state
             if (!leadingTitleMatches(doc, title())) return null
             const end = doc.firstChild!.nodeSize
-            if (selection.from < end) return null
+            if (duplicateTitleKey.getState(state) && selection.from < end) return null
             return DecorationSet.create(doc, [Decoration.node(0, end, { class: 'gr-dup-title' })])
           },
         },

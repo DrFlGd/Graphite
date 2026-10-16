@@ -9,6 +9,7 @@ import { WikiLink } from './extensions/WikiLink'
 import { SlashMenu } from './extensions/SlashMenu'
 import { NoteLinkSuggest, type NoteCandidate } from './extensions/NoteLinkSuggest'
 import { DuplicateTitle } from './extensions/DuplicateTitle'
+import { InlineFields } from './extensions/InlineFields'
 
 export interface EditorExtensionOptions {
   placeholder?: string
@@ -46,6 +47,7 @@ export function buildExtensions(opts: EditorExtensionOptions = {}): AnyExtension
     SlashMenu.configure({ context: opts.blockContext ?? {} }),
     NoteLinkSuggest.configure({ search: opts.searchNotes ?? (async () => []) }),
     DuplicateTitle.configure({ title: opts.title ?? (() => undefined) }),
+    InlineFields,
   ]
 }
 

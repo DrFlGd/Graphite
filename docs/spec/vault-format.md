@@ -74,6 +74,7 @@ A file with no front-matter is a valid note (title = file name, type = note); it
 | `[[folder/Title]]` | Disambiguate by path when two notes share a title. |
 | `![[file.png]]`, `![[Title]]` | Embed an asset or a note (M3). |
 | `relation:: [[Title]]` | Typed link. An inline field at the start of a line (or list item) types every link on that line. Common relations: `depends-on`, `derived-from`, `references`, `contradicts`, `part-of`, `source`, `blocks`. |
+| `key: "[[Title]]"` in front-matter | Typed link from a property: a string (or list of strings) holding wiki links links the note, with the key as the relation, e.g. `project: "[[Garden Robot]]"`. |
 | `[text](https://…)` | Ordinary web link, not indexed as a note link. |
 
 Links inside inline code or fenced code blocks are not links.

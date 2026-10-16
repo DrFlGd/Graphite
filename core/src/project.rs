@@ -266,6 +266,12 @@ mod tests {
         log.body =
             "Measured 30 ml on [[Solar still]].\n- [?] Does it work in winter? project:: [[Solar still]]\n".into();
         vault.write(&log).unwrap();
+        // A source that names the project only in its front-matter.
+        let mut source = vault.create("Still design paper", Some("source"), None).unwrap();
+        source
+            .properties
+            .insert("project".into(), serde_json::Value::String("[[Solar still]]".into()));
+        vault.write(&source).unwrap();
         let order_parts = vault
             .items(&ItemFilter {
                 note: Some(promoted.id.clone()),
@@ -282,7 +288,8 @@ mod tests {
         assert_eq!(hub.project.title, "Solar still");
         assert_eq!(hub.decisions.len(), 1);
         assert_eq!(hub.decisions[0].title, "Use peristaltic pump");
-        assert!(hub.sources.is_empty());
+        assert_eq!(hub.sources.len(), 1);
+        assert_eq!(hub.sources[0].title, "Still design paper");
         assert_eq!(hub.linked.len(), 1);
         assert_eq!(hub.linked[0].note.title, "Dew log");
         assert!(hub.linked[0].incoming);

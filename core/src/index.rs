@@ -7,12 +7,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::assets::{Asset, AssetHit, AssetKind, DerivedState};
 use crate::error::Result;
-use crate::links::{extract_links, normalise_target, LinkKind};
+use crate::links::{extract_links, extract_property_links, normalise_target, LinkKind};
 use crate::note::{Note, NoteSummary};
 use crate::tasks::{parse_items, Item, ItemKind, ItemStatus};
 use std::collections::HashMap;
 
-const SCHEMA_VERSION: i64 = 5;
+/// Bump to rebuild every index (6: links from front-matter properties).
+const SCHEMA_VERSION: i64 = 6;
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -324,7 +325,10 @@ impl Index {
             tx.prepare_cached("INSERT OR REPLACE INTO properties(note_id, key, value) VALUES (?1, ?2, ?3)")?
                 .execute(params![note.id, k, v.to_string()])?;
         }
-        for l in extract_links(&note.body) {
+        for l in extract_property_links(&note.properties)
+            .into_iter()
+            .chain(extract_links(&note.body))
+        {
             tx.prepare_cached(
                 "INSERT INTO links(from_id, target, target_norm, heading, relation, kind, position) VALUES (?1,?2,?3,?4,?5,?6,?7)",
             )?

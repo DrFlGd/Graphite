@@ -217,7 +217,13 @@ kbd { font-family: var(--gr-mono); font-size: 0.85em; background: var(--gr-bg-su
 .tasks .btn { padding: 5px 10px; font-size: 13px; }
 
 /* Query views */
-.qv { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.qv { display: flex; flex-direction: column; height: 100%; min-height: 0; min-width: 0; }
+.qv__edit-query { padding: 4px 9px; font-size: 12px; }
+.qv__wiki { color: var(--gr-link); cursor: pointer; }
+.qv__wiki:hover { text-decoration: underline; }
+.qv__cell--date { width: 110px; min-width: 110px; font-variant-numeric: tabular-nums; }
+.qv__cell--project { min-width: 150px; }
+.qv__cell.is-invalid { border-color: #b3261e; }
 .qv__toolbar { display: flex; align-items: center; gap: 8px; padding: 8px 24px; border-bottom: 1px solid var(--gr-border); background: var(--gr-bg-elev); flex-wrap: wrap; }
 .qv__toolbar select { padding: 4px 6px; border: 1px solid var(--gr-border); border-radius: var(--gr-radius); background: var(--gr-bg); font-size: 13px; }
 .qv__query { flex: 1 1 260px; display: flex; gap: 4px; min-width: 200px; }
@@ -270,7 +276,9 @@ kbd { font-family: var(--gr-mono); font-size: 0.85em; background: var(--gr-bg-su
 .qv__column { flex: 0 0 280px; background: var(--gr-bg-subtle); border-radius: 10px; padding: 8px 8px 4px; max-height: 100%; display: flex; flex-direction: column; min-height: 0; }
 .qv__column h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--gr-fg-muted); margin: 2px 4px 8px; font-weight: 600; display: flex; justify-content: space-between; }
 .qv__cards { display: flex; flex-direction: column; gap: 6px; overflow: auto; }
-.qv__cards .qv__item { background: var(--gr-bg-elev); border: 1px solid var(--gr-border); border-radius: 8px; padding: 6px 8px; flex-wrap: wrap; }
+.qv__cards .qv__item { background: var(--gr-bg-elev); border: 1px solid var(--gr-border); border-radius: 8px; padding: 6px 8px; display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 8px; row-gap: 4px; align-items: start; }
+.qv__cards .qv__item > .qv__check, .qv__cards .qv__item > .qv__gap { margin-top: 3px; align-self: start; }
+.qv__cards .qv__item > .qv__badges { grid-column: 2; }
 .qv__cards .qv__note { margin-bottom: 0; }
 
 /* Project hub */
@@ -287,6 +295,11 @@ kbd { font-family: var(--gr-mono); font-size: 0.85em; background: var(--gr-bg-su
 .hub__section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
 .hub__section-head h3 { margin: 0; }
 .hub__section-head .icon-btn { width: 22px; height: 22px; }
+.hub__section { min-width: 0; }
+.hub__about { border: 1px solid var(--gr-border); border-radius: 10px; background: var(--gr-bg-elev); }
+.hub__about > summary { cursor: pointer; padding: 8px 16px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--gr-fg-muted); font-weight: 600; }
+.hub__about .gr-editor__content { padding: 0 16px 12px; max-height: 50vh; }
+.hub__about .gr-prose img { max-height: 240px; width: auto; }
 .hub__section--tasks { border: 1px solid var(--gr-border); border-radius: 10px; overflow: hidden; display: flex; flex-direction: column; min-height: 240px; max-height: 60vh; }
 .hub__section--tasks h3 { padding: 8px 16px 0; margin: 0; }
 .hub__section--tasks .qv__toolbar { padding: 6px 16px; background: transparent; }

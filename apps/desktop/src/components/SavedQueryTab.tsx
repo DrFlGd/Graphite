@@ -7,6 +7,7 @@ interface Props {
   noteId: string
   version: number
   onOpen: (id: string, newTab?: boolean) => void
+  onFollowLink: (target: string) => void
   onChanged: () => void
   onError: (e: string) => void
   /** Switch this tab to the plain editor. */
@@ -18,7 +19,7 @@ interface Props {
  * note's `query` and `view` properties, so editing them here writes the
  * note, and the note's own editor shows the same text.
  */
-export function SavedQueryTab({ noteId, version, onOpen, onChanged, onError, onEdit }: Props) {
+export function SavedQueryTab({ noteId, version, onOpen, onFollowLink, onChanged, onError, onEdit }: Props) {
   const [note, setNote] = useState<Note | null>(null)
 
   useEffect(() => {
@@ -63,7 +64,7 @@ export function SavedQueryTab({ noteId, version, onOpen, onChanged, onError, onE
           <SquarePen size={14} /> Edit note
         </button>
       </header>
-      <QueryView query={query} onQueryChange={(q) => void save({ query: q })} view={view} onViewChange={(v) => void save({ view: v })} version={version} onOpen={onOpen} onChanged={onChanged} onError={onError} />
+      <QueryView query={query} onQueryChange={(q) => void save({ query: q })} view={view} onViewChange={(v) => void save({ view: v })} version={version} onOpen={onOpen} onFollowLink={onFollowLink} onChanged={onChanged} onError={onError} />
     </div>
   )
 }

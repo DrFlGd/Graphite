@@ -120,6 +120,47 @@ fn field_re() -> &'static Regex {
     RE.get_or_init(|| Regex::new(r"^\s*(?:[-*+]\s+)?([A-Za-z][\w-]*)::\s").unwrap())
 }
 
+/// Wiki links written in front-matter property values, such as
+/// `project: "[[Garden Robot]]"` or `related: ["[[A]]", "[[B]]"]`. Each is a
+/// typed link whose relation is the property's key. They sort before the
+/// body's links (position 0).
+pub fn extract_property_links(properties: &serde_json::Map<String, serde_json::Value>) -> Vec<Link> {
+    fn strings<'a>(v: &'a serde_json::Value, out: &mut Vec<&'a str>) {
+        match v {
+            serde_json::Value::String(s) => out.push(s),
+            serde_json::Value::Array(a) => a.iter().for_each(|x| strings(x, out)),
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    for (key, value) in properties {
+        let mut texts = Vec::new();
+        strings(value, &mut texts);
+        for text in texts {
+            for cap in link_re().captures_iter(text) {
+                let inner = cap.get(2).unwrap().as_str();
+                let target_part = inner.split_once('|').map_or(inner, |(t, _)| t);
+                let (target, heading) = match target_part.split_once('#') {
+                    Some((t, h)) => (t.trim(), Some(h.trim().to_string())),
+                    None => (target_part.trim(), None),
+                };
+                if target.is_empty() {
+                    continue;
+                }
+                out.push(Link {
+                    target: target.to_string(),
+                    heading,
+                    display: None,
+                    relation: Some(key.clone()),
+                    kind: LinkKind::Wiki,
+                    position: 0,
+                });
+            }
+        }
+    }
+    out
+}
+
 /// Extract every link in `body`, in document order.
 pub fn extract_links(body: &str) -> Vec<Link> {
     let mut out = Vec::new();
@@ -308,5 +349,26 @@ mod tests {
     fn normalises_targets() {
         assert_eq!(normalise_target("Projects/Garden Robot.md"), "garden robot");
         assert_eq!(normalise_target(" GR "), "gr");
+    }
+
+    #[test]
+    fn property_links_are_typed_by_their_key() {
+        let props: serde_json::Map<String, serde_json::Value> = serde_json::from_str(
+            r#"{"project": "[[Garden Robot]]", "related": ["[[A#Part]]", "plain", "[[B|shown]]"], "count": 3, "url": "https://x.y"}"#,
+        )
+        .unwrap();
+        let links = extract_property_links(&props);
+        let got: Vec<_> = links
+            .iter()
+            .map(|l| (l.target.as_str(), l.relation.as_deref(), l.heading.as_deref()))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                ("Garden Robot", Some("project"), None),
+                ("A", Some("related"), Some("Part")),
+                ("B", Some("related"), None),
+            ]
+        );
     }
 }

@@ -26,6 +26,8 @@ export interface NoteEditorProps {
   editable?: boolean
   /** The note's title shown above the editor; a first `# heading` repeating it is hidden. */
   title?: string
+  /** Show the formatting toolbar (default true). Read-only views usually hide it. */
+  toolbar?: boolean
   /** Rendered at the right end of the toolbar. */
   toolbarTrailing?: ReactNode
   autofocus?: boolean
@@ -45,7 +47,7 @@ export interface NoteEditorProps {
  * out (ADR-005).
  */
 export function NoteEditor(props: NoteEditorProps) {
-  const { markdown, docKey, onChange, onFollowLink, onOpenFile, onOpenUrl, searchNotes, resolveSrc, blockContext, placeholder, editable = true, title, toolbarTrailing, autofocus, onReady, onFiles } = props
+  const { markdown, docKey, onChange, onFollowLink, onOpenFile, onOpenUrl, searchNotes, resolveSrc, blockContext, placeholder, editable = true, title, toolbar = true, toolbarTrailing, autofocus, onReady, onFiles } = props
   const lastEmitted = useRef<string>(markdown)
   /**
    * The editor's own serialisation of the text it last loaded. Parsing and
@@ -175,8 +177,8 @@ export function NoteEditor(props: NoteEditorProps) {
   if (!editor) return null
   return (
     <div className="gr-editor">
-      <Toolbar editor={editor} context={context} trailing={toolbarTrailing} />
-      <TableControls editor={editor} />
+      {toolbar && <Toolbar editor={editor} context={context} trailing={toolbarTrailing} />}
+      {toolbar && <TableControls editor={editor} />}
       <EditorContent editor={editor} className="gr-editor__content" />
     </div>
   )
