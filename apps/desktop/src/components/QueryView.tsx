@@ -26,6 +26,8 @@ interface Props {
   hideQuery?: boolean
   /** Extra controls on the toolbar. */
   extra?: ReactNode
+  /** No toolbar at all (the phone's Tasks screen brings its own controls). */
+  bare?: boolean
 }
 
 const ITEM_GROUPS = ['status', 'project', 'priority', 'due', 'note', 'heading', 'tag']
@@ -37,7 +39,7 @@ const STATUSES: ItemStatus[] = ['open', 'doing', 'done', 'cancelled']
  * (columns from `group:`) and task tree. Every view writes back through the
  * core, so a ticked box or an edited cell changes one line of a file.
  */
-export function QueryView({ query, onQueryChange, view, onViewChange, version, onOpen, onFollowLink, onChanged, onError, onSave, hideQuery, extra }: Props) {
+export function QueryView({ query, onQueryChange, view, onViewChange, version, onOpen, onFollowLink, onChanged, onError, onSave, hideQuery, extra, bare }: Props) {
   const [draft, setDraft] = useState(query)
   // The raw query stays behind a button; the filters and views lead.
   const [editing, setEditing] = useState(false)
@@ -98,6 +100,7 @@ export function QueryView({ query, onQueryChange, view, onViewChange, version, o
 
   return (
     <div className="qv">
+      {!bare && (
       <div className="qv__toolbar">
         {!hideQuery && !editing && query && (
           <button type="button" className="btn qv__edit-query" title={query} onClick={() => setEditing(true)}>
@@ -159,6 +162,7 @@ export function QueryView({ query, onQueryChange, view, onViewChange, version, o
           </button>
         )}
       </div>
+      )}
       <div className="qv__body">
         {result && result.total === 0 && <p className="qv__empty">Nothing matches.</p>}
         {result && result.total > 0 && domain === 'items' && effectiveView === 'tree' && <ItemTree rows={result.items} groups={itemGroups} none={none} onOpen={onOpen} onFollow={follow} act={act} />}

@@ -273,7 +273,7 @@ export function MobileApp() {
           </div>
         ) : (
           <div className="mobile__screen mobile__editor">
-            <NoteEditor markdown={open.body} docKey={open.id} onChange={onBodyChange} editable={editing} resolveSrc={resolveSrc} onFollowLink={(t) => void followLink(t)} onOpenUrl={(href) => void openUrl(href).catch((e) => setError(String(e)))} searchNotes={searchNotes} />
+            <NoteEditor markdown={open.body} docKey={open.id} title={open.title} onChange={onBodyChange} editable={editing} toolbar={editing} resolveSrc={resolveSrc} onFollowLink={(t) => void followLink(t)} onOpenUrl={(href) => void openUrl(href).catch((e) => setError(String(e)))} searchNotes={searchNotes} />
           </div>
         )}
       </div>
@@ -314,7 +314,7 @@ export function MobileApp() {
   } else if (tab === 'tasks') {
     screen = (
       <div className="mobile__screen">
-        <TasksView notes={notes} version={version} onOpen={(id) => void openNote(id)} onFollowLink={(t) => void followLink(t)} onChanged={() => void refreshList()} onError={setError} onSaveQuery={() => setNotice('Save queries on a desktop')} />
+        <TasksView notes={notes} version={version} onOpen={(id) => void openNote(id)} onFollowLink={(t) => void followLink(t)} onChanged={() => void refreshList()} onError={setError} onSaveQuery={() => setNotice('Save queries on a desktop')} compact />
       </div>
     )
   } else {
