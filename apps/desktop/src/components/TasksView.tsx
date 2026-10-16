@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Plus } from 'lucide-react'
+import { ListFilter, Plus } from 'lucide-react'
 import { api, type NoteSummary } from '../api'
 import { termValue, withTerm } from '../query'
 import { QueryView, isViewKind, type ViewKind } from './QueryView'
@@ -12,6 +12,8 @@ interface Props {
   onChanged: () => void
   onError: (e: string) => void
   onSaveQuery: (query: string, view: ViewKind) => void
+  /** Phone layout: no title, filters behind one button, the tree view only. */
+  compact?: boolean
 }
 
 const QUERY_KEY = 'graphite.tasks.query'
@@ -38,7 +40,8 @@ const store = (key: string, value: string) => {
  * state, in any of the query views. The query line is editable for anything
  * the controls do not cover.
  */
-export function TasksView({ notes, version, onOpen, onFollowLink, onChanged, onError, onSaveQuery }: Props) {
+export function TasksView({ notes, version, onOpen, onFollowLink, onChanged, onError, onSaveQuery, compact }: Props) {
+  const [showFilters, setShowFilters] = useState(false)
   const [query, setQuery] = useState(() => stored(QUERY_KEY, DEFAULT_QUERY))
   const [view, setView] = useState<ViewKind>(() => {
     const v = stored(VIEW_KEY, 'tree')
@@ -93,22 +96,42 @@ export function TasksView({ notes, version, onOpen, onFollowLink, onChanged, onE
     </>
   )
 
+  const addForm = (
+    <form
+      className="tasks__add"
+      onSubmit={(e) => {
+        e.preventDefault()
+        void add()
+      }}
+    >
+      <input value={newText} onChange={(e) => setNewText(e.target.value)} placeholder={projectTitle ? `Add a ${kind === 'gap' ? 'question' : 'task'} to ${projectTitle}…` : `Add a ${kind === 'gap' ? 'question' : 'task'} to today's note…`} aria-label="New task" />
+      <button type="submit" className="icon-btn" title="Add" disabled={!newText.trim()}>
+        <Plus size={16} />
+      </button>
+    </form>
+  )
+
+  if (compact) {
+    const filtered = projectTitle !== '' || status !== 'open' || kind !== 'task'
+    return (
+      <div className="tasks tasks--compact">
+        <header className="tasks__header">
+          {addForm}
+          <button type="button" className={`icon-btn tasks__filter-btn ${filtered ? 'is-on' : ''}`} aria-expanded={showFilters} aria-label="Filters" title="Filters" onClick={() => setShowFilters((f) => !f)}>
+            <ListFilter size={18} />
+          </button>
+        </header>
+        {showFilters && <div className="tasks__filters">{controls}</div>}
+        <QueryView query={query} onQueryChange={setQuery} view="tree" onViewChange={() => {}} version={version} onOpen={onOpen} onFollowLink={onFollowLink} onChanged={onChanged} onError={onError} bare />
+      </div>
+    )
+  }
+
   return (
     <div className="tasks">
       <header className="tasks__header">
         <h2>Tasks</h2>
-        <form
-          className="tasks__add"
-          onSubmit={(e) => {
-            e.preventDefault()
-            void add()
-          }}
-        >
-          <input value={newText} onChange={(e) => setNewText(e.target.value)} placeholder={projectTitle ? `Add a ${kind === 'gap' ? 'question' : 'task'} to ${projectTitle}…` : `Add a ${kind === 'gap' ? 'question' : 'task'} to today's note…`} aria-label="New task" />
-          <button type="submit" className="icon-btn" title="Add" disabled={!newText.trim()}>
-            <Plus size={16} />
-          </button>
-        </form>
+        {addForm}
       </header>
       <QueryView query={query} onQueryChange={setQuery} view={view} onViewChange={setView} version={version} onOpen={onOpen} onFollowLink={onFollowLink} onChanged={onChanged} onError={onError} onSave={onSaveQuery} extra={controls} />
     </div>
