@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, CheckSquare, Inbox, ListChecks, Pencil, RefreshCw, Search, Settings2, SquareKanban } from 'lucide-react'
+import { ArrowLeft, CheckSquare, Inbox, ListChecks, Pencil, Plus, RefreshCw, Search, Settings2, SquareKanban } from 'lucide-react'
 import { openUrl } from '@tauri-apps/plugin-opener'
-import { NoteEditor, type NoteCandidate } from '@graphite/ui'
+import { NoteEditor, type BlockContext, type NoteCandidate } from '@graphite/ui'
 import { api, assetUrl, type Note, type NoteSummary, type SearchHit, type SyncStatus, type VaultInfo } from './api'
 import { InboxView } from './components/InboxView'
 import { TasksView } from './components/TasksView'
 import { ProjectHub } from './components/ProjectHub'
 import { SyncDialog } from './components/SyncDialog'
+import { TemplatePicker } from './components/TemplatePicker'
+import { pickAndAttach } from './filePicker'
 import { syncSummary } from './components/sync'
 import { snippetText } from './snippet'
 
@@ -31,6 +33,7 @@ export function MobileApp() {
   const [notice, setNotice] = useState<string | null>(null)
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null)
   const [syncOpen, setSyncOpen] = useState(false)
+  const [creating, setCreating] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [capture, setCapture] = useState('')
   const [query, setQuery] = useState('')
@@ -142,12 +145,12 @@ export function MobileApp() {
   }, [query, version])
 
   const openNote = useCallback(
-    async (id: string) => {
+    async (id: string, edit = false) => {
       try {
         const n = await api.readNote(id)
         setHub(n.type === 'project' ? id : null)
         setOpen(n)
-        setEditing(false)
+        setEditing(edit && n.type !== 'project')
       } catch (e) {
         setError(String(e))
       }
@@ -237,6 +240,32 @@ export function MobileApp() {
     [openNote, refreshList],
   )
 
+  // Inserting an image or file while editing: the picked file is copied into the vault.
+  const blockContext = useMemo<BlockContext>(
+    () => ({
+      pickImage: async () => {
+        try {
+          const [picked] = await pickAndAttach({ title: 'Insert image', images: true })
+          return picked?.src ?? null
+        } catch (e) {
+          setError(String(e))
+          return null
+        }
+      },
+      pickFile: async () => {
+        try {
+          const [picked] = await pickAndAttach({ title: 'Attach a file' })
+          if (picked) void api.deriveAssets()
+          return picked ?? null
+        } catch (e) {
+          setError(String(e))
+          return null
+        }
+      },
+    }),
+    [],
+  )
+
   const recent = useMemo(() => [...notes].sort((a, b) => (b.updated ?? '').localeCompare(a.updated ?? '')).slice(0, 50), [notes])
   const projects = useMemo(() => notes.filter((n) => n.type === 'project').sort((a, b) => a.title.localeCompare(b.title)), [notes])
 
@@ -273,7 +302,7 @@ export function MobileApp() {
           </div>
         ) : (
           <div className="mobile__screen mobile__editor">
-            <NoteEditor markdown={open.body} docKey={open.id} title={open.title} onChange={onBodyChange} editable={editing} toolbar={editing} resolveSrc={resolveSrc} onFollowLink={(t) => void followLink(t)} onOpenUrl={(href) => void openUrl(href).catch((e) => setError(String(e)))} searchNotes={searchNotes} />
+            <NoteEditor markdown={open.body} docKey={open.id} title={open.title} onChange={onBodyChange} editable={editing} toolbar={editing} resolveSrc={resolveSrc} blockContext={blockContext} onFollowLink={(t) => void followLink(t)} onOpenUrl={(href) => void openUrl(href).catch((e) => setError(String(e)))} searchNotes={searchNotes} />
           </div>
         )}
       </div>
@@ -329,7 +358,7 @@ export function MobileApp() {
               </button>
             </li>
           ))}
-          {projects.length === 0 && <li className="mobile__none">No projects yet. Promote a note to a project on a desktop.</li>}
+          {projects.length === 0 && <li className="mobile__none">No projects yet. Tap + to start one.</li>}
         </ul>
       </div>
     )
@@ -340,6 +369,9 @@ export function MobileApp() {
       {!open && (
         <header className="mobile__bar">
           <span className="mobile__title">{tab === 'inbox' ? 'Inbox' : tab === 'notes' ? 'Notes' : tab === 'tasks' ? 'Tasks' : 'Projects'}</span>
+          <button type="button" className="mobile__icon" onClick={() => setCreating(true)} aria-label="New note or project">
+            <Plus size={20} />
+          </button>
           <button type="button" className={`mobile__icon ${syncing ? 'is-spinning' : ''}`} onClick={() => void syncNow()} disabled={syncing} aria-label="Sync now" title={syncSummary(syncStatus)}>
             <RefreshCw size={18} />
           </button>
@@ -368,6 +400,18 @@ export function MobileApp() {
             <span>Projects</span>
           </button>
         </nav>
+      )}
+      {creating && (
+        <TemplatePicker
+          mode={{ kind: 'create' }}
+          blank
+          onClose={() => setCreating(false)}
+          onDone={(id) => {
+            setCreating(false)
+            void refreshList().then(() => openNote(id, true))
+          }}
+          onError={setError}
+        />
       )}
       {syncOpen && <SyncDialog status={syncStatus} onStatus={setSyncStatus} onClose={() => setSyncOpen(false)} onError={setError} />}
       {error && (

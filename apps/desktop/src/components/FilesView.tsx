@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import { Archive, Box, Braces, Code2, File, FileText, Image as ImageIcon, Music, PenTool, Plus, Video } from 'lucide-react'
+import { pickAndAttach } from '../filePicker'
 import { api, assetUrl, ASSET_KINDS, type Asset, type AssetKind } from '../api'
 import { formatDuration, formatSize } from './AssetView'
 
@@ -95,11 +95,9 @@ export function FilesView({ vaultRoot, version, folder, compact, onOpen, onChang
   }, [assets, kind, filter])
 
   const addFiles = async () => {
-    const picked = await openDialog({ multiple: true, directory: false, title: folder ? `Add files to ${folder}` : 'Add files to the vault' })
-    const files = Array.isArray(picked) ? picked : picked ? [picked] : []
-    if (files.length === 0) return
     try {
-      for (const f of files) await api.attachFile(f, folder)
+      const added = await pickAndAttach({ multiple: true, title: folder ? `Add files to ${folder}` : 'Add files to the vault', folder })
+      if (added.length === 0) return
       await api.deriveAssets()
       onChanged()
     } catch (e) {

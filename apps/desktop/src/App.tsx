@@ -4,6 +4,7 @@ import { openUrl } from '@tauri-apps/plugin-opener'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { Archive, ArrowUpRight, Settings2, CalendarDays, Columns2, Download, FilePlus2, FolderOpen, Inbox, LayoutTemplate, ListChecks, Locate, PanelLeft, PanelRight, Paperclip, RefreshCw, Search, SquareKanban, Trash2, Waypoints, X, Zap } from 'lucide-react'
 import { insertAttachments, type AttachmentItem, type Editor } from '@graphite/ui'
+import { pickAndAttach } from './filePicker'
 import { api, assetUrl, decodePath, INBOX_DIR, type Note, type NoteSummary, type SyncStatus, type VaultInfo } from './api'
 import { Sidebar } from './components/Sidebar'
 import { NoteTab } from './components/NoteTab'
@@ -472,10 +473,9 @@ export function App() {
   }, [openVault])
 
   const pickImage = useCallback(async () => {
-    const file = await openDialog({ multiple: false, directory: false, title: 'Insert image', filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'] }] })
-    if (typeof file !== 'string') return null
     try {
-      return await api.attachFile(file)
+      const [picked] = await pickAndAttach({ title: 'Insert image', images: true })
+      return picked?.src ?? null
     } catch (e) {
       setError(String(e))
       return null
@@ -483,13 +483,12 @@ export function App() {
   }, [])
 
   const pickFile = useCallback(async () => {
-    const file = await openDialog({ multiple: false, directory: false, title: 'Attach a file' })
-    if (typeof file !== 'string') return null
     try {
-      const src = await api.attachFile(file)
+      const [picked] = await pickAndAttach({ title: 'Attach a file' })
+      if (!picked) return null
       void api.deriveAssets()
       setAssetVersion((v) => v + 1)
-      return { src, name: file.split(/[\\/]/).pop() ?? src }
+      return picked
     } catch (e) {
       setError(String(e))
       return null
