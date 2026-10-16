@@ -542,12 +542,7 @@ impl Vault {
                 }
             }
         }
-        for entry in ignore::WalkBuilder::new(self.root())
-            .hidden(true)
-            .git_ignore(false)
-            .build()
-            .flatten()
-        {
+        for entry in crate::vault::walk(self.root()).flatten() {
             let p = entry.path();
             if !p.is_file() {
                 continue;

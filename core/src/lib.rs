@@ -26,7 +26,7 @@ pub mod templates;
 pub mod vault;
 pub mod watcher;
 
-pub use assets::{tools, Asset, AssetHit, AssetKind, DerivedState, Tools};
+pub use assets::{refresh_tools, tools, Asset, AssetHit, AssetKind, DerivedState, Tools};
 pub use capture::{capture_title, is_url, DAILY_DIR, INBOX_DIR};
 pub use config::VaultConfig;
 pub use device::{local_device, Device};
@@ -40,9 +40,12 @@ pub use project::{LinkedNote, ProjectHub};
 pub use query::{Domain, Group, NoteRow, Query, QueryResult};
 pub use relay::{RelayConfig, RelayReport, RelayStatus};
 pub use snapshot::Snapshot;
-pub use sources::{classify_url, ImportOptions, ImportReport, SourceKind, SourceRow, UpdateCheck};
+pub use sources::{
+    classify_url, install_yt_dlp, ImportOptions, ImportReport, PendingCheck, PendingImport, SourceKind, SourceRow,
+    UpdateCheck,
+};
 pub use sync::{content_hash, SyncDevice, SyncReport, SyncStatus};
 pub use tasks::{Item, ItemKind, ItemStatus, Progress};
 pub use templates::Template;
-pub use vault::{is_conflict_copy, Vault, VaultInfo};
+pub use vault::{is_conflict_copy, is_source_checkout, Vault, VaultInfo};
 pub use watcher::{is_sync_document, VaultEvent, Watcher};

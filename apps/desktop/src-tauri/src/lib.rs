@@ -8,8 +8,9 @@ use std::sync::Mutex;
 
 use graphite_core::{
     Asset, AssetHit, AssetKind, Backlink, Graph, ImportOptions, ImportReport, Item, ItemFilter, ItemKind, ItemRow,
-    ItemStatus, Note, NoteSummary, Progress, ProjectHub, QueryResult, RelayConfig, SearchHit, Snapshot, SourceKind,
-    SourceRow, SyncReport, SyncStatus, Template, Tools, UpdateCheck, Vault, VaultConfig, VaultInfo, Version, Watcher,
+    ItemStatus, Note, NoteSummary, PendingImport, Progress, ProjectHub, QueryResult, RelayConfig, SearchHit, Snapshot,
+    SourceKind, SourceRow, SyncReport, SyncStatus, Template, Tools, UpdateCheck, Vault, VaultConfig, VaultInfo,
+    Version, Watcher,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -761,12 +762,37 @@ fn derive_assets(app: AppHandle) {
 
 #[tauri::command]
 fn tools() -> Tools {
-    graphite_core::tools().clone()
+    graphite_core::tools()
+}
+
+/// Download yt-dlp for video imports; returns the tools found afterwards.
+#[tauri::command]
+async fn install_yt_dlp() -> CmdResult<Tools> {
+    blocking(|| graphite_core::install_yt_dlp().map_err(err)).await?;
+    Ok(graphite_core::tools())
 }
 
 // ----- sources (importers) -----
-// These hit the network, so they are async: Tauri runs them off the main
-// thread and the window stays responsive while a clone or download runs.
+// Fetching can take minutes (a clone, a video), so it runs off the main
+// thread and without the vault lock: only the short steps before and after
+// it hold the vault, and the window keeps working meanwhile.
+
+/// Run blocking work on a worker thread.
+async fn blocking<T: Send + 'static>(f: impl FnOnce() -> CmdResult<T> + Send + 'static) -> CmdResult<T> {
+    tauri::async_runtime::spawn_blocking(f).await.map_err(err)?
+}
+
+/// Fetch a started import, then record it in the vault.
+async fn run_import(app: &AppHandle, state: &State<'_, AppState>, mut job: PendingImport) -> CmdResult<ImportReport> {
+    let (job, fetched) = blocking(move || {
+        let fetched = job.fetch();
+        Ok((job, fetched))
+    })
+    .await?;
+    let report = with_vault(state, |v| v.finish_import(job, fetched))?;
+    start_deriver(app);
+    Ok(report)
+}
 
 /// Import a URL (GitHub repo, web page, video, PDF or file) as a source note.
 #[tauri::command]
@@ -787,17 +813,15 @@ async fn import_url(
         project: project.filter(|p| !p.trim().is_empty()),
         title: title.filter(|t| !t.trim().is_empty()),
     };
-    let report = with_vault(&state, |v| v.import_url(&url, &opts))?;
-    start_deriver(&app);
-    Ok(report)
+    let job = with_vault(&state, |v| v.begin_import(&url, &opts))?;
+    run_import(&app, &state, job).await
 }
 
 /// Fetch a source again, replacing its files and note body.
 #[tauri::command]
 async fn reimport_source(app: AppHandle, state: State<'_, AppState>, id: String) -> CmdResult<ImportReport> {
-    let report = with_vault(&state, |v| v.reimport_source(&id))?;
-    start_deriver(&app);
-    Ok(report)
+    let job = with_vault(&state, |v| v.begin_reimport(&id))?;
+    run_import(&app, &state, job).await
 }
 
 /// Every source note with its record (url, kind, last check, update flag).
@@ -807,16 +831,34 @@ fn sources(state: State<AppState>) -> CmdResult<Vec<SourceRow>> {
 }
 
 /// Compare one source with upstream and record the outcome on its note.
+async fn check_one(state: &State<'_, AppState>, id: String) -> CmdResult<UpdateCheck> {
+    let job = with_vault(state, |v| v.begin_check(&id))?;
+    let (job, outcome) = blocking(move || {
+        let outcome = job.probe().map_err(err)?;
+        Ok((job, outcome))
+    })
+    .await?;
+    with_vault(state, |v| v.finish_check(job, outcome))
+}
+
 #[tauri::command]
 async fn check_source(state: State<'_, AppState>, id: String) -> CmdResult<UpdateCheck> {
-    with_vault(&state, |v| v.check_source(&id))
+    check_one(&state, id).await
 }
 
 /// Check every source not checked within `max_age_hours` (all of them when omitted).
 #[tauri::command]
 async fn check_all_sources(state: State<'_, AppState>, max_age_hours: Option<u64>) -> CmdResult<Vec<UpdateCheck>> {
     let max_age = max_age_hours.map(|h| std::time::Duration::from_secs(h * 3600));
-    with_vault(&state, |v| v.check_all_sources(max_age))
+    let due = with_vault(&state, |v| v.sources_due(max_age))?;
+    let mut out = Vec::new();
+    for row in due {
+        out.push(match check_one(&state, row.note.id.clone()).await {
+            Ok(c) => c,
+            Err(e) => UpdateCheck::failed(&row, e),
+        });
+    }
+    Ok(out)
 }
 
 /// Which importer a URL would get.
@@ -1057,6 +1099,7 @@ pub fn run() {
             derive_asset,
             derive_assets,
             tools,
+            install_yt_dlp,
             import_url,
             reimport_source,
             sources,

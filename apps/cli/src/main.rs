@@ -88,7 +88,11 @@ enum Cmd {
         limit: Option<usize>,
     },
     /// Which optional tools (ffmpeg, poppler, git, yt-dlp) were found on the PATH
-    Tools,
+    Tools {
+        /// Download yt-dlp (for video imports) into Graphite's own tools folder
+        #[arg(long)]
+        install_yt_dlp: bool,
+    },
     /// Import a URL: a GitHub repo, a web page, a YouTube video, a PDF or any file
     Import {
         url: String,
@@ -272,8 +276,37 @@ fn main() {
     }
 }
 
+/// `graphite tools`: needs no vault, so it runs before one is opened.
+fn tools_cmd(json: bool, install_yt_dlp: bool) -> Result<()> {
+    if install_yt_dlp {
+        let path = graphite_core::install_yt_dlp()?;
+        eprintln!("yt-dlp saved to {}", path.display());
+    }
+    let t = graphite_core::tools();
+    if json {
+        println!("{}", serde_json::to_string_pretty(&t)?);
+    } else {
+        for (name, ok, what) in [
+            ("ffmpeg", t.ffmpeg, "video and image thumbnails"),
+            ("ffprobe", t.ffprobe, "video and audio metadata"),
+            ("pdfinfo", t.pdfinfo, "PDF page count and title"),
+            ("pdftotext", t.pdftotext, "PDF text for search"),
+            ("pdftoppm", t.pdftoppm, "PDF thumbnails"),
+            ("git", t.git, "repositories outside GitHub (GitHub works without it)"),
+            ("yt-dlp", t.yt_dlp, "video importer"),
+            ("browser", t.browser, "web page screenshots (Chromium, Chrome or Edge)"),
+        ] {
+            println!("{:<10} {}  {}", name, if ok { "found  " } else { "missing" }, what);
+        }
+    }
+    Ok(())
+}
+
 fn run() -> Result<()> {
     let cli = Cli::parse();
+    if let Cmd::Tools { install_yt_dlp } = cli.cmd {
+        return tools_cmd(cli.json, install_yt_dlp);
+    }
     let root = cli
         .vault
         .clone()
@@ -281,6 +314,7 @@ fn run() -> Result<()> {
     let mut vault = Vault::open(&root).with_context(|| format!("opening vault at {}", root.display()))?;
 
     match cli.cmd {
+        Cmd::Tools { .. } => unreachable!("handled before the vault is opened"),
         Cmd::Init => {
             let info = vault.info()?;
             println!("Vault ready at {} ({} notes)", info.root, info.note_count);
@@ -638,25 +672,6 @@ fn run() -> Result<()> {
                         s.files.unwrap_or(0),
                         format_size(s.size as i64)
                     );
-                }
-            }
-        }
-        Cmd::Tools => {
-            let t = graphite_core::tools();
-            if cli.json {
-                println!("{}", serde_json::to_string_pretty(t)?);
-            } else {
-                for (name, ok, what) in [
-                    ("ffmpeg", t.ffmpeg, "video and image thumbnails"),
-                    ("ffprobe", t.ffprobe, "video and audio metadata"),
-                    ("pdfinfo", t.pdfinfo, "PDF page count and title"),
-                    ("pdftotext", t.pdftotext, "PDF text for search"),
-                    ("pdftoppm", t.pdftoppm, "PDF thumbnails"),
-                    ("git", t.git, "GitHub importer"),
-                    ("yt-dlp", t.yt_dlp, "video importer"),
-                    ("browser", t.browser, "web page screenshots (Chromium, Chrome or Edge)"),
-                ] {
-                    println!("{:<10} {}  {}", name, if ok { "found  " } else { "missing" }, what);
                 }
             }
         }

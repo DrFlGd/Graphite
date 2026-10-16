@@ -22,7 +22,7 @@ interface Props {
 const KINDS: SourceKind[] = ['github', 'page', 'video', 'pdf', 'file', 'git']
 
 const KIND_HINT: Record<SourceKind, string> = {
-  github: 'Clones the repository and uses its README as the note.',
+  github: 'Downloads the repository and uses its README as the note.',
   git: 'Clones the repository and uses its README as the note.',
   page: 'Saves the page as one HTML file, its readable text as the note, and a screenshot.',
   video: 'Downloads the video and its thumbnail with yt-dlp.',
@@ -43,6 +43,7 @@ export function ImportDialog({ request, notes, onClose, onDone, onError }: Props
   const [tools, setTools] = useState<Tools | null>(null)
   const [busy, setBusy] = useState(false)
   const [failure, setFailure] = useState<string | null>(null)
+  const [installing, setInstalling] = useState(false)
   const input = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -82,11 +83,23 @@ export function ImportDialog({ request, notes, onClose, onDone, onError }: Props
 
   const effective: SourceKind | null = kind || guess
   const valid = /^(https?:\/\/|git@)\S+$/.test(url.trim())
-  const missingTool = effective === 'video' && tools && !tools.yt_dlp ? 'yt-dlp' : (effective === 'github' || effective === 'git') && tools && !tools.git ? 'git' : null
+  const missingTool = tools ? missingToolFor(effective, url.trim(), tools) : null
   const projects = notes.filter((n) => n.type === 'project')
 
+  const installYtDlp = async () => {
+    setInstalling(true)
+    setFailure(null)
+    try {
+      setTools(await api.installYtDlp())
+    } catch (e) {
+      setFailure(String(e))
+    } finally {
+      setInstalling(false)
+    }
+  }
+
   const go = async () => {
-    if (!valid || busy) return
+    if (!valid || busy || installing) return
     setBusy(true)
     setFailure(null)
     try {
@@ -132,8 +145,17 @@ export function ImportDialog({ request, notes, onClose, onDone, onError }: Props
             </div>
             <p className="import__hint">
               {effective ? KIND_HINT[effective] : 'The importer is picked from the link; click one to override.'}
-              {missingTool && <strong> {missingTool} is not installed, so this import will fail.</strong>}
+              {missingTool === 'git' && <strong> git is not installed. It is needed for repositories outside GitHub.</strong>}
+              {missingTool === 'yt-dlp' && <strong> Video import needs yt-dlp, which is not installed.</strong>}
             </p>
+            {missingTool === 'yt-dlp' && (
+              <div className="import__install">
+                <button type="button" className="btn" onClick={() => void installYtDlp()} disabled={installing || busy}>
+                  {installing ? 'Downloading yt-dlp…' : 'Download yt-dlp'}
+                </button>
+                <span className="qv__muted">About 40 MB, from the yt-dlp project on GitHub.</span>
+              </div>
+            )}
             <div className="import__fields">
               <label>
                 Project
@@ -156,7 +178,7 @@ export function ImportDialog({ request, notes, onClose, onDone, onError }: Props
             <button type="button" className="btn" onClick={onClose} disabled={busy}>
               Cancel
             </button>
-            <button type="submit" className="btn btn--primary" disabled={!valid || busy}>
+            <button type="submit" className="btn btn--primary" disabled={!valid || busy || installing}>
               {busy ? 'Importing…' : 'Import'}
             </button>
           </div>
@@ -164,4 +186,22 @@ export function ImportDialog({ request, notes, onClose, onDone, onError }: Props
       </div>
     </div>
   )
+}
+
+/** The program an import of this kind and URL needs but cannot find, if any. */
+export function missingToolFor(kind: SourceKind | null, url: string, tools: Tools): 'git' | 'yt-dlp' | null {
+  if (kind === 'video' && !tools.yt_dlp) return 'yt-dlp'
+  if (tools.git) return null
+  if (kind === 'git') return 'git'
+  // GitHub repositories download without git; other hosts still need it.
+  if (kind === 'github' && !isGithubUrl(url)) return 'git'
+  return null
+}
+
+function isGithubUrl(url: string): boolean {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '') === 'github.com'
+  } catch {
+    return false
+  }
 }
