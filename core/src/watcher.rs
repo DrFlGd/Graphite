@@ -117,7 +117,7 @@ fn rebase(root: &Path, canon: &Path, path: PathBuf) -> PathBuf {
 }
 
 /// Keep files and directories inside the vault, but never the root itself,
-/// hidden entries or anything under `.graphite/`, except the sync
+/// hidden entries, repository checkouts or anything under `.graphite/`, except the sync
 /// documents other devices publish under `.graphite/sync/`, which the app
 /// wants to know about.
 fn relevant(root: &Path, state_dir: &Path, path: &Path) -> bool {
@@ -130,6 +130,7 @@ fn relevant(root: &Path, state_dir: &Path, path: &Path) -> bool {
     let rel = path.strip_prefix(root).unwrap_or(path);
     !rel.components()
         .any(|c| c.as_os_str() == STATE_DIR || c.as_os_str().to_string_lossy().starts_with('.'))
+        && !crate::vault::is_source_checkout(&crate::vault::to_rel_string(rel))
 }
 
 /// `.graphite/sync/<device>/<something>` (not the `sync` folder itself).

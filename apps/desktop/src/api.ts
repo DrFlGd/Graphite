@@ -356,6 +356,8 @@ export const api = {
   deriveAsset: (path: string) => invoke<Asset>('derive_asset', { path }),
   deriveAssets: () => invoke<void>('derive_assets'),
   tools: () => invoke<Tools>('tools'),
+  /** Download yt-dlp into Graphite's tools folder; returns the tools found afterwards. */
+  installYtDlp: () => invoke<Tools>('install_yt_dlp'),
   /** Import a URL as a source note; `kind` overrides the importer guessed from the URL. */
   importUrl: (url: string, opts: { kind?: SourceKind; project?: string; title?: string } = {}) =>
     invoke<ImportReport>('import_url', { url, kind: opts.kind ?? null, project: opts.project ?? null, title: opts.title ?? null }),

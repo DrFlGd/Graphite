@@ -129,13 +129,7 @@ impl Vault {
         let mut seen = std::collections::HashSet::new();
         let mut seen_assets = std::collections::HashSet::new();
         let mut changed = 0usize;
-        for entry in WalkBuilder::new(&self.root)
-            .hidden(true)
-            .git_ignore(false)
-            .filter_entry(|e| e.file_name() != STATE_DIR)
-            .build()
-            .flatten()
-        {
+        for entry in walk(&self.root).flatten() {
             let path = entry.path();
             if !path.is_file() {
                 continue;
@@ -229,10 +223,10 @@ impl Vault {
         if is_conflict_copy(&rel) {
             return Ok(None);
         }
+        if is_ignored(&rel) {
+            return Ok(None);
+        }
         if abs.extension().and_then(|e| e.to_str()) != Some("md") {
-            if is_hidden(&rel) {
-                return Ok(None);
-            }
             let meta = fs::metadata(&abs)?;
             self.index_asset(&rel, &meta)?;
             return Ok(None);
@@ -241,9 +235,9 @@ impl Vault {
     }
 
     /// Whether a path is an asset the vault would index, i.e. not a note,
-    /// not hidden and not under `.graphite/`.
+    /// not hidden, not under `.graphite/` and not inside a cloned repository.
     pub fn is_asset_path(rel: &str) -> bool {
-        !rel.to_lowercase().ends_with(".md") && !is_hidden(rel)
+        !rel.to_lowercase().ends_with(".md") && !is_ignored(rel)
     }
 
     pub(crate) fn index_file(&mut self, rel: &str) -> Result<String> {
@@ -518,6 +512,39 @@ impl Vault {
 
 fn is_hidden(rel: &str) -> bool {
     rel.split('/').any(|seg| seg.starts_with('.'))
+}
+
+/// Paths the vault never indexes or syncs: hidden ones and repository checkouts.
+fn is_ignored(rel: &str) -> bool {
+    is_hidden(rel) || is_source_checkout(rel)
+}
+
+/// A repository the GitHub/git importer checked out
+/// (`attachments/sources/<name>/repo/…`). Its files belong to that project,
+/// not to the vault: its READMEs are not notes and its files are not listed.
+pub fn is_source_checkout(rel: &str) -> bool {
+    let mut parts = rel.split('/');
+    parts.next() == Some("attachments")
+        && parts.next() == Some("sources")
+        && parts.next().is_some_and(|name| !name.is_empty())
+        && parts.next() == Some(crate::sources::CHECKOUT_DIR)
+}
+
+/// Every file the vault is made of: no hidden entries, no `.graphite/`, no
+/// repository checkouts (those can hold thousands of files).
+pub(crate) fn walk(root: &Path) -> ignore::Walk {
+    let base = root.to_path_buf();
+    WalkBuilder::new(root)
+        .hidden(true)
+        .git_ignore(false)
+        .filter_entry(move |e| {
+            e.file_name() != STATE_DIR
+                && !e
+                    .path()
+                    .strip_prefix(&base)
+                    .is_ok_and(|rel| is_source_checkout(&to_rel_string(rel)))
+        })
+        .build()
 }
 
 /// Whether a file name is a sync client's duplicate of a file two machines

@@ -8,17 +8,19 @@
 //! re-import refreshes the files and the note body.
 //!
 //! Importers:
-//! - **GitHub / git**: shallow clone, README rendered into the note, commit recorded.
+//! - **GitHub / git**: shallow clone (or, for GitHub without git, the
+//!   repository's zip archive), README rendered into the note, commit recorded.
 //! - **Web page**: original HTML kept, readable text as Markdown, images
 //!   downloaded, screenshot when a Chromium-family browser is on the PATH.
 //! - **Video** (YouTube, Vimeo and everything else yt-dlp knows): the video
-//!   file, thumbnail, description and chapter list. Needs `yt-dlp`.
+//!   file, thumbnail, description and chapter list. Needs `yt-dlp`, which
+//!   `install_yt_dlp` can download.
 //! - **PDF and direct files**: downloaded into the vault as assets.
 
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
@@ -26,7 +28,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
-use crate::assets::{find_tool, is_asset_ext, tools};
+use crate::assets::{command, find_tool, is_asset_ext, refresh_tools, tools, tools_dir};
 use crate::attachments::safe_attachment_name;
 use crate::error::{Error, Result};
 use crate::note::{Note, NoteSummary};
@@ -35,6 +37,8 @@ use crate::vault::{safe_file_stem, Vault};
 pub const SOURCES_DIR: &str = "attachments/sources";
 pub const SOURCE_NOTES_DIR: &str = "notes/Sources";
 pub const SOURCE_TYPE: &str = "source";
+/// Folder inside a source's folder holding a repository's files.
+pub const CHECKOUT_DIR: &str = "repo";
 
 /// Largest page, PDF or file the importers download (video goes through yt-dlp).
 const MAX_DOWNLOAD: u64 = 200 * 1024 * 1024;
@@ -180,6 +184,20 @@ pub struct UpdateCheck {
     pub checked: DateTime<Utc>,
 }
 
+impl UpdateCheck {
+    /// The entry for a source whose check failed.
+    pub fn failed(row: &SourceRow, e: impl std::fmt::Display) -> UpdateCheck {
+        UpdateCheck {
+            note_id: row.note.id.clone(),
+            title: row.note.title.clone(),
+            kind: row.kind,
+            changed: false,
+            summary: format!("Check failed: {e}"),
+            checked: Utc::now(),
+        }
+    }
+}
+
 /// A source note as the UI lists it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceRow {
@@ -304,7 +322,7 @@ fn plain_path(p: &Path) -> String {
 }
 
 fn run(cmd: &str, args: &[&str], cwd: Option<&Path>) -> std::result::Result<String, String> {
-    let mut c = Command::new(cmd);
+    let mut c = command(cmd);
     c.args(args).stdin(Stdio::null());
     if let Some(d) = cwd {
         c.current_dir(d);
@@ -402,12 +420,197 @@ fn demote_headings(md: &str) -> String {
         .join("\n")
 }
 
-fn remote_head(url: &str) -> std::result::Result<String, String> {
-    let out = run("git", &["ls-remote", &clone_url(url), "HEAD"], None)?;
+fn remote_head(url: &str) -> Result<String> {
+    if !tools().git {
+        if let Some((owner, name)) = github_repo(url) {
+            return github_head(&owner, &name).map(|(sha, _, _)| sha);
+        }
+    }
+    let out = run("git", &["ls-remote", &clone_url(url), "HEAD"], None).map_err(other)?;
     out.split_whitespace()
         .next()
         .map(|s| s.to_string())
-        .ok_or_else(|| "no HEAD on remote".to_string())
+        .ok_or_else(|| other("no HEAD on remote"))
+}
+
+/// Shallow clone (or update) `url` into `repo`; returns the commit, its
+/// date and its subject line.
+fn git_checkout(url: &str, repo: &Path) -> Result<(String, String, String)> {
+    if repo.join(".git").is_dir() {
+        run("git", &["fetch", "--depth", "1", "origin", "HEAD"], Some(repo)).map_err(other)?;
+        run("git", &["reset", "--hard", "FETCH_HEAD"], Some(repo)).map_err(other)?;
+    } else {
+        let _ = fs::remove_dir_all(repo);
+        run(
+            "git",
+            &["clone", "--depth", "1", "--quiet", &clone_url(url), &plain_path(repo)],
+            None,
+        )
+        .map_err(other)?;
+    }
+    let commit = run("git", &["rev-parse", "HEAD"], Some(repo))
+        .map_err(other)?
+        .trim()
+        .to_string();
+    let log = run("git", &["log", "-1", "--format=%cI%n%s"], Some(repo)).unwrap_or_default();
+    let mut lines = log.lines();
+    let committed = lines.next().unwrap_or("").to_string();
+    let subject = lines.next().unwrap_or("").to_string();
+    Ok((commit, committed, subject))
+}
+
+// ----- GitHub without git -----
+
+/// `(owner, repo)` of a github.com repository URL.
+fn github_repo(url: &str) -> Option<(String, String)> {
+    if url_host(url).as_deref() != Some("github.com") {
+        return None;
+    }
+    let mut segs = url_path(url).split('/').filter(|s| !s.is_empty());
+    let owner = segs.next()?.to_string();
+    let name = segs.next()?.trim_end_matches(".git").to_string();
+    Some((owner, name))
+}
+
+fn github_api() -> String {
+    std::env::var("GRAPHITE_GITHUB_API")
+        .unwrap_or_else(|_| "https://api.github.com".to_string())
+        .trim_end_matches('/')
+        .to_string()
+}
+
+fn github_err(e: Error) -> Error {
+    let msg = e.to_string();
+    if msg.contains("403") || msg.contains("429") {
+        other("GitHub is limiting downloads from this network. Try again in an hour, or install git.")
+    } else if msg.contains("404") {
+        other("GitHub has no public repository at that address.")
+    } else {
+        e
+    }
+}
+
+/// The latest commit on the default branch: sha, date, subject.
+fn github_head(owner: &str, name: &str) -> Result<(String, String, String)> {
+    let (text, _) = fetch_text(&format!("{}/repos/{owner}/{name}/commits/HEAD", github_api())).map_err(github_err)?;
+    let v: Value = serde_json::from_str(&text).map_err(|e| other(format!("GitHub answer: {e}")))?;
+    let sha = v["sha"]
+        .as_str()
+        .ok_or_else(|| other("GitHub did not say which commit is latest"))?
+        .to_string();
+    let date = v["commit"]["committer"]["date"].as_str().unwrap_or("").to_string();
+    let subject = v["commit"]["message"]
+        .as_str()
+        .and_then(|m| m.lines().next())
+        .unwrap_or("")
+        .to_string();
+    Ok((sha, date, subject))
+}
+
+/// Download a GitHub repository's files at its latest commit into `dest`
+/// (a zip archive, so git is not needed).
+fn github_download(owner: &str, name: &str, dest: &Path) -> Result<(String, String, String)> {
+    let head = github_head(owner, name)?;
+    let zip = dest.with_extension("zip.part");
+    let fetched = fetch_to_file(
+        &format!("{}/repos/{owner}/{name}/zipball/{}", github_api(), head.0),
+        &zip,
+    );
+    let unpacked = fetched.map_err(github_err).and_then(|_| {
+        let _ = fs::remove_dir_all(dest);
+        unzip_without_top_folder(&zip, dest)
+    });
+    let _ = fs::remove_file(&zip);
+    unpacked?;
+    Ok(head)
+}
+
+/// Unpack a zip whose entries all sit in one top folder (as GitHub's
+/// archives do) into `dest`, dropping that folder.
+fn unzip_without_top_folder(zip: &Path, dest: &Path) -> Result<()> {
+    const MAX_UNPACKED: u64 = 2 * 1024 * 1024 * 1024;
+    let mut archive =
+        zip::ZipArchive::new(fs::File::open(zip)?).map_err(|e| other(format!("not a zip archive: {e}")))?;
+    fs::create_dir_all(dest)?;
+    let mut total = 0u64;
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i).map_err(|e| other(format!("zip archive: {e}")))?;
+        let Some(path) = entry.enclosed_name() else { continue };
+        let rel: PathBuf = path.components().skip(1).collect();
+        if rel.as_os_str().is_empty() {
+            continue;
+        }
+        let out = dest.join(&rel);
+        if entry.is_dir() {
+            fs::create_dir_all(&out)?;
+            continue;
+        }
+        total += entry.size();
+        if total > MAX_UNPACKED {
+            return Err(other("the repository is larger than 2 GB"));
+        }
+        if let Some(parent) = out.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        std::io::copy(&mut entry, &mut fs::File::create(&out)?)?;
+    }
+    Ok(())
+}
+
+// ----- yt-dlp -----
+
+/// yt-dlp's standalone build for this platform, as named in its releases.
+fn yt_dlp_asset() -> Option<&'static str> {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("windows", "aarch64") => Some("yt-dlp_arm64.exe"),
+        ("windows", _) => Some("yt-dlp.exe"),
+        ("linux", "x86_64") => Some("yt-dlp_linux"),
+        ("linux", "aarch64") => Some("yt-dlp_linux_aarch64"),
+        ("macos", _) => Some("yt-dlp_macos"),
+        _ => None,
+    }
+}
+
+/// Download yt-dlp from its GitHub releases into `tools_dir()`, checking it
+/// against the published SHA-256 sums. Returns where it was put.
+pub fn install_yt_dlp() -> Result<PathBuf> {
+    let asset = yt_dlp_asset().ok_or_else(|| other("Video import works in the desktop app, not on this device."))?;
+    let base = std::env::var("GRAPHITE_YT_DLP_URL")
+        .unwrap_or_else(|_| "https://github.com/yt-dlp/yt-dlp/releases/latest/download".to_string());
+    let base = base.trim_end_matches('/');
+    let dir = tools_dir().ok_or_else(|| other("no folder for downloaded tools on this system"))?;
+    fs::create_dir_all(&dir)?;
+    let file = if cfg!(windows) { "yt-dlp.exe" } else { "yt-dlp" };
+    let part = dir.join(format!("{file}.part"));
+    let checked = (|| -> Result<()> {
+        let (sums, _) = fetch_text(&format!("{base}/SHA2-256SUMS"))?;
+        let want = sums
+            .lines()
+            .find_map(|l| {
+                let (hash, name) = l.trim().split_once(char::is_whitespace)?;
+                (name.trim().trim_start_matches('*') == asset).then(|| hash.to_ascii_lowercase())
+            })
+            .ok_or_else(|| other(format!("yt-dlp's checksums do not list {asset}")))?;
+        let (got, _) = fetch_to_file(&format!("{base}/{asset}"), &part)?;
+        if got != want {
+            return Err(other("the yt-dlp download did not match its published checksum"));
+        }
+        Ok(())
+    })();
+    if let Err(e) = checked {
+        let _ = fs::remove_file(&part);
+        return Err(e);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&part, fs::Permissions::from_mode(0o755))?;
+    }
+    let dest = dir.join(file);
+    let _ = fs::remove_file(&dest);
+    fs::rename(&part, &dest)?;
+    refresh_tools();
+    Ok(dest)
 }
 
 // ----- web pages -----
@@ -621,24 +824,51 @@ pub(crate) fn browser_binary() -> Option<PathBuf> {
 
 fn screenshot(url: &str, dest: &Path) -> bool {
     let Some(bin) = browser_binary() else { return false };
-    let shot = format!("--screenshot={}", plain_path(dest));
-    let status = Command::new(bin)
-        .args([
-            "--headless=new",
-            "--disable-gpu",
-            "--no-sandbox",
-            "--hide-scrollbars",
-            "--window-size=1280,1800",
-            "--virtual-time-budget=8000",
-            "--timeout=25000",
-            &shot,
-            url,
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-    matches!(status, Ok(s) if s.success()) && dest.is_file()
+    // A profile of its own: with the user's profile, a browser that is
+    // already open would take the URL as a new tab instead of a screenshot.
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let profile = std::env::temp_dir().join(format!("graphite-shot-{}-{stamp}", std::process::id()));
+    let mut cmd = command(&bin.to_string_lossy());
+    cmd.args([
+        "--headless=new",
+        "--disable-gpu",
+        "--no-sandbox",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--hide-scrollbars",
+        "--window-size=1280,1800",
+        "--virtual-time-budget=8000",
+        "--timeout=25000",
+    ])
+    .arg(format!("--user-data-dir={}", plain_path(&profile)))
+    .arg(format!("--screenshot={}", plain_path(dest)))
+    .arg(url)
+    .stdin(Stdio::null())
+    .stdout(Stdio::null())
+    .stderr(Stdio::null());
+    let ok = match cmd.spawn() {
+        Ok(mut child) => {
+            // Never let a stuck browser hold up the import.
+            let deadline = std::time::Instant::now() + Duration::from_secs(45);
+            loop {
+                match child.try_wait() {
+                    Ok(Some(status)) => break status.success(),
+                    Ok(None) if std::time::Instant::now() < deadline => std::thread::sleep(Duration::from_millis(200)),
+                    _ => {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        break false;
+                    }
+                }
+            }
+        }
+        Err(_) => false,
+    };
+    let _ = fs::remove_dir_all(&profile);
+    ok && dest.is_file()
 }
 
 fn image_name(url: &str, i: usize) -> String {
@@ -712,35 +942,343 @@ fn md_escape_title(t: &str) -> String {
 }
 
 // ----- the vault side -----
+//
+// An import or an update check is split in three so the app can do the slow
+// part (a clone, a video download) without holding the vault: a short step
+// with the vault (`begin_*`), the network work with none (`fetch` /
+// `probe`), and another short step with the vault (`finish_*`).
+
+/// An import whose note and folder exist but whose content is not fetched yet.
+pub struct PendingImport {
+    url: String,
+    kind: SourceKind,
+    opts: ImportOptions,
+    note_id: String,
+    title: String,
+    folder: String,
+    dir: PathBuf,
+    /// A first import (not a re-import): undone if it fails.
+    fresh: bool,
+    fetched: Option<Fetched>,
+}
+
+/// What `PendingImport::fetch` brought back, before it is written into the note.
+enum Fetched {
+    Repo {
+        commit: String,
+        committed: String,
+        subject: String,
+        readme: Option<(String, String)>,
+    },
+    Page {
+        title: String,
+        description: Option<String>,
+        /// Readable text with image links pointing at the downloaded copies.
+        markdown: String,
+        hash: String,
+        image_count: usize,
+        has_shot: bool,
+        files: Vec<String>,
+    },
+    Video {
+        info: Value,
+        video_rel: Option<String>,
+        thumb_rel: Option<String>,
+    },
+    File {
+        name: String,
+        rel: String,
+        hash: String,
+        pdf_title: Option<String>,
+    },
+}
+
+impl PendingImport {
+    /// Download the source into its folder. Touches only that folder.
+    pub fn fetch(&mut self) -> Result<()> {
+        let url = self.url.as_str();
+        let (folder, dir) = (self.folder.as_str(), self.dir.as_path());
+        let fetched = match self.kind {
+            SourceKind::Github | SourceKind::Git => {
+                let repo = dir.join(CHECKOUT_DIR);
+                let (commit, committed, subject) = if tools().git {
+                    git_checkout(url, &repo)?
+                } else if let Some((owner, name)) = github_repo(url) {
+                    github_download(&owner, &name, &repo)?
+                } else {
+                    return Err(other(
+                        "git is not installed. It is needed for repositories outside GitHub.",
+                    ));
+                };
+                Fetched::Repo {
+                    commit,
+                    committed,
+                    subject,
+                    readme: readme_in(&repo),
+                }
+            }
+            SourceKind::Page => {
+                let (html, _) = fetch_text(url)?;
+                let page = extract_page(url, &html);
+                fs::write(dir.join("page.html"), &html)?;
+                let mut files = vec![format!("{folder}/page.html")];
+                // Images: download what the readable text references, rewrite to local paths.
+                let mut markdown = page.markdown.clone();
+                let img_dir = dir.join("images");
+                for (i, img) in page.images.iter().take(MAX_PAGE_IMAGES).enumerate() {
+                    let name = image_name(img, i);
+                    let dest = img_dir.join(&name);
+                    if dest.is_file() || fetch_to_file(img, &dest).is_ok() {
+                        let rel = format!("{folder}/images/{name}");
+                        files.push(rel.clone());
+                        markdown = markdown.replace(&format!("]({img})"), &format!("]({})", encode_md_path(&rel)));
+                    }
+                }
+                let shot = dir.join("screenshot.png");
+                let has_shot = shot.is_file() || screenshot(url, &shot);
+                if has_shot {
+                    files.push(format!("{folder}/screenshot.png"));
+                }
+                Fetched::Page {
+                    title: page.title,
+                    description: page.description,
+                    markdown,
+                    hash: sha256_str(&page.markdown),
+                    image_count: page.images.len().min(MAX_PAGE_IMAGES),
+                    has_shot,
+                    files,
+                }
+            }
+            SourceKind::Video => {
+                if !tools().yt_dlp {
+                    return Err(other(if yt_dlp_asset().is_some() {
+                        "yt-dlp is needed to import videos. Use Download yt-dlp in the import window, or install it yourself."
+                    } else {
+                        "Video import works in the desktop app, not on this device."
+                    }));
+                }
+                let template = dir.join("%(title).120B [%(id)s].%(ext)s");
+                let template = template.to_string_lossy().into_owned();
+                // Separate video and audio streams need ffmpeg to be merged;
+                // without it, take the best single file.
+                let format = if tools().ffmpeg {
+                    "bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b"
+                } else {
+                    "b[ext=mp4]/b"
+                };
+                let mut args = vec![
+                    "--no-playlist",
+                    "--no-warnings",
+                    "--no-overwrites",
+                    "-f",
+                    format,
+                    "--write-thumbnail",
+                    "--write-info-json",
+                    "--restrict-filenames",
+                    "-o",
+                    &template,
+                ];
+                if tools().ffmpeg {
+                    args.extend(["--merge-output-format", "mp4", "--convert-thumbnails", "jpg"]);
+                }
+                args.push(url);
+                run("yt-dlp", &args, None).map_err(other)?;
+                // Find what it wrote.
+                let mut info_path = None;
+                let mut video_path = None;
+                let mut thumb_path = None;
+                for entry in fs::read_dir(dir)?.flatten() {
+                    let p = entry.path();
+                    let name = p.file_name().unwrap_or_default().to_string_lossy().into_owned();
+                    if name.ends_with(".info.json") {
+                        info_path = Some(p);
+                    } else if name.ends_with(".jpg") || name.ends_with(".webp") || name.ends_with(".png") {
+                        thumb_path = Some(p);
+                    } else if matches!(
+                        p.extension().and_then(|e| e.to_str()),
+                        Some("mp4" | "mkv" | "webm" | "m4a" | "mp3")
+                    ) {
+                        video_path = Some(p);
+                    }
+                }
+                let rel_of = |p: &PathBuf| format!("{folder}/{}", p.file_name().unwrap_or_default().to_string_lossy());
+                Fetched::Video {
+                    info: info_path
+                        .as_ref()
+                        .and_then(|p| fs::read_to_string(p).ok())
+                        .and_then(|s| serde_json::from_str(&s).ok())
+                        .unwrap_or(Value::Null),
+                    video_rel: video_path.as_ref().map(rel_of),
+                    thumb_rel: thumb_path.as_ref().map(rel_of),
+                }
+            }
+            SourceKind::Pdf | SourceKind::File => {
+                let fetch_url = if self.kind == SourceKind::Pdf {
+                    resolve_pdf_url(url)
+                } else {
+                    url.to_string()
+                };
+                let guess = url_path(&fetch_url).rsplit('/').next().unwrap_or("").to_string();
+                let mut name = safe_attachment_name(&guess);
+                if self.kind == SourceKind::Pdf && !name.to_ascii_lowercase().ends_with(".pdf") {
+                    name = format!("{}.pdf", name.trim_end_matches('.'));
+                }
+                let tmp = dir.join("download.part");
+                let (hash, disposition) = fetch_to_file(&fetch_url, &tmp)?;
+                if let Some(d) = disposition {
+                    let d = safe_attachment_name(&d);
+                    if d != "file" && d.contains('.') {
+                        name = d;
+                    }
+                }
+                if name == "file" || name.is_empty() {
+                    name = format!("download-{}", &hash[..8]);
+                }
+                let dest = dir.join(&name);
+                let _ = fs::remove_file(&dest);
+                fs::rename(&tmp, &dest)?;
+                let pdf_title = if self.kind == SourceKind::Pdf && self.opts.title.is_none() {
+                    pdf_title(&dest)
+                } else {
+                    None
+                };
+                Fetched::File {
+                    rel: format!("{folder}/{name}"),
+                    name,
+                    hash,
+                    pdf_title,
+                }
+            }
+        };
+        self.fetched = Some(fetched);
+        Ok(())
+    }
+
+    /// The source note's title when the import started.
+    pub fn title(&self) -> &str {
+        &self.title
+    }
+}
+
+/// An update check between reading the note and recording the outcome.
+pub struct PendingCheck {
+    note_id: String,
+    url: String,
+    kind: SourceKind,
+    hash: String,
+    words: i64,
+    video_title: Option<String>,
+    video_file_ok: bool,
+    tmp: PathBuf,
+}
+
+impl PendingCheck {
+    /// Compare with upstream: whether it changed, and a one-line summary.
+    pub fn probe(&self) -> Result<(bool, String)> {
+        let (url, hash) = (self.url.as_str(), self.hash.as_str());
+        Ok(match self.kind {
+            SourceKind::Github | SourceKind::Git => {
+                let head = remote_head(url)?;
+                if head == hash {
+                    (false, format!("Up to date at {}", &head[..7.min(head.len())]))
+                } else {
+                    let short = |c: &str| c[..7.min(c.len())].to_string();
+                    let summary = if hash.is_empty() {
+                        format!("Upstream is at {}", short(&head))
+                    } else {
+                        format!("New commits: {} (have {})", short(&head), short(hash))
+                    };
+                    (true, summary)
+                }
+            }
+            SourceKind::Page => {
+                let (html, _) = fetch_text(url)?;
+                let page = extract_page(url, &html);
+                if sha256_str(&page.markdown) == hash {
+                    (false, "Page text unchanged".into())
+                } else {
+                    let new_words = word_count(&page.markdown) as i64;
+                    let delta = new_words - self.words;
+                    (
+                        true,
+                        format!(
+                            "Page text changed ({} words, {}{})",
+                            new_words,
+                            if delta >= 0 { "+" } else { "" },
+                            delta
+                        ),
+                    )
+                }
+            }
+            SourceKind::Video => {
+                if !tools().yt_dlp {
+                    return Err(other("yt-dlp is not installed"));
+                }
+                let out = run(
+                    "yt-dlp",
+                    &["--dump-single-json", "--no-playlist", "--no-warnings", url],
+                    None,
+                )
+                .map_err(other)?;
+                let info: Value = serde_json::from_str(&out).map_err(|e| other(format!("yt-dlp output: {e}")))?;
+                let v = parse_video_info(&info);
+                if !self.video_file_ok {
+                    (true, "Video file is missing from the vault".into())
+                } else if v.id != hash && !hash.is_empty() {
+                    (true, format!("Video id changed to {}", v.id))
+                } else if Some(v.title.as_str()) != self.video_title.as_deref() {
+                    (true, format!("Title changed: {}", v.title))
+                } else {
+                    (false, "Video unchanged".into())
+                }
+            }
+            SourceKind::Pdf | SourceKind::File => {
+                let fetched = fetch_to_file(&resolve_pdf_url(url), &self.tmp);
+                let _ = fs::remove_file(&self.tmp);
+                if fetched?.0 == hash {
+                    (false, "File unchanged".into())
+                } else {
+                    (true, "File changed on the server".into())
+                }
+            }
+        })
+    }
+}
 
 impl Vault {
     /// Import a URL (F2–F6, F9): fetch it, write files under
     /// `attachments/sources/<name>/`, and create the source note.
     pub fn import_url(&mut self, url: &str, opts: &ImportOptions) -> Result<ImportReport> {
+        let mut job = self.begin_import(url, opts)?;
+        let fetched = job.fetch();
+        self.finish_import(job, fetched)
+    }
+
+    /// Re-fetch a source and refresh its files and note body (F7).
+    pub fn reimport_source(&mut self, id: &str) -> Result<ImportReport> {
+        let mut job = self.begin_reimport(id)?;
+        let fetched = job.fetch();
+        self.finish_import(job, fetched)
+    }
+
+    /// First step of `import_url`: create the source note and its folder.
+    pub fn begin_import(&mut self, url: &str, opts: &ImportOptions) -> Result<PendingImport> {
         let url = url.trim();
         if url.is_empty() || !(url.contains("://") || url.starts_with("git@")) {
             return Err(other(format!("not a URL: {url}")));
         }
         let kind = opts.kind.unwrap_or_else(|| classify_url(url));
-        let mut note = self.new_source_note(url, kind, opts)?;
-        match self.run_import(url, kind, &mut note, opts) {
-            Ok(report) => Ok(report),
-            Err(e) => {
-                // Leave no half-made record behind: the note and the folder made for it.
-                let _ = self.delete(&note.id);
-                if let Some(folder) = prop_str(&note, "folder") {
-                    if let Ok(abs) = self.safe_join(&folder) {
-                        let _ = fs::remove_dir_all(abs);
-                    }
-                }
-                Err(e)
-            }
-        }
+        let note = self.new_source_note(url, kind, opts)?;
+        let id = note.id.clone();
+        self.pending_import(note, url, kind, opts.clone(), true)
+            .inspect_err(|_| {
+                let _ = self.delete(&id);
+            })
     }
 
-    /// Re-fetch a source and refresh its files and note body (F7).
-    pub fn reimport_source(&mut self, id: &str) -> Result<ImportReport> {
-        let mut note = self.read(id)?;
+    /// First step of `reimport_source`.
+    pub fn begin_reimport(&mut self, id: &str) -> Result<PendingImport> {
+        let note = self.read(id)?;
         if note.note_type != SOURCE_TYPE {
             return Err(other(format!("{} is not a source note", note.title)));
         }
@@ -753,7 +1291,257 @@ impl Vault {
             project: None,
             title: Some(note.title.clone()),
         };
-        self.run_import(&url, kind, &mut note, &opts)
+        self.pending_import(note, &url, kind, opts, false)
+    }
+
+    fn pending_import(
+        &mut self,
+        mut note: Note,
+        url: &str,
+        kind: SourceKind,
+        opts: ImportOptions,
+        fresh: bool,
+    ) -> Result<PendingImport> {
+        let had_folder = prop_str(&note, "folder").is_some();
+        let (folder, dir) = self.source_folder(&mut note)?;
+        if fresh || !had_folder {
+            note = self.write(&note)?;
+        }
+        Ok(PendingImport {
+            url: url.to_string(),
+            kind,
+            opts,
+            note_id: note.id,
+            title: note.title,
+            folder,
+            dir,
+            fresh,
+            fetched: None,
+        })
+    }
+
+    /// Last step: write what `fetch` brought back into the note. When the
+    /// fetch failed, a first import leaves nothing behind.
+    pub fn finish_import(&mut self, job: PendingImport, fetched: Result<()>) -> Result<ImportReport> {
+        let (id, folder, fresh) = (job.note_id.clone(), job.folder.clone(), job.fresh);
+        let result = fetched.and_then(|()| self.write_import(job));
+        if result.is_err() && fresh {
+            // Leave no half-made record behind: the note and the folder made for it.
+            let _ = self.delete(&id);
+            if let Ok(abs) = self.safe_join(&folder) {
+                let _ = fs::remove_dir_all(abs);
+            }
+        }
+        result
+    }
+
+    fn write_import(&mut self, job: PendingImport) -> Result<ImportReport> {
+        let PendingImport {
+            url,
+            kind,
+            opts,
+            note_id,
+            folder,
+            fetched,
+            ..
+        } = job;
+        let url = url.as_str();
+        let fetched = fetched.ok_or_else(|| other("nothing was fetched"))?;
+        // Read the note again: it may have been edited while the fetch ran.
+        let mut note = self.read(&note_id)?;
+        let mut files = Vec::new();
+        let project_line = opts
+            .project
+            .clone()
+            .or_else(|| prop_str(&note, "project").map(|p| p.trim_matches(['[', ']']).to_string()))
+            .map(|p| format!("project:: [[{p}]]\n"))
+            .unwrap_or_default();
+        let summary = match fetched {
+            Fetched::Repo {
+                commit,
+                committed,
+                subject,
+                readme,
+            } => {
+                let old = prop_str(&note, "hash").unwrap_or_default();
+                let mut body = format!("# {}\n\nsource:: {url}\n{project_line}\n", note.title);
+                let short = &commit[..7.min(commit.len())];
+                let subject_part = if subject.is_empty() {
+                    String::new()
+                } else {
+                    format!(" (\"{subject}\")")
+                };
+                let date_part = if committed.is_empty() {
+                    String::new()
+                } else {
+                    format!(", committed {}", &committed[..10.min(committed.len())])
+                };
+                let repo_rel = format!("{folder}/{CHECKOUT_DIR}");
+                body.push_str(&format!(
+                    "Downloaded at commit `{short}`{subject_part}{date_part}. Files are in [{repo_rel}]({}).\n",
+                    encode_md_path(&repo_rel)
+                ));
+                if let Some((name, text)) = &readme {
+                    body.push_str(&format!("\n## {name}\n\n{}\n", demote_headings(text.trim())));
+                }
+                note.body = body;
+                note.properties.insert("hash".into(), json!(commit));
+                note.properties.insert("commit".into(), json!(commit));
+                if old.is_empty() {
+                    format!("Downloaded {} at {}", note.title, short)
+                } else if old == commit {
+                    "Already at the latest commit".to_string()
+                } else {
+                    format!("Updated {} → {}", &old[..7.min(old.len())], short)
+                }
+            }
+            Fetched::Page {
+                title,
+                description,
+                markdown,
+                hash,
+                image_count,
+                has_shot,
+                files: page_files,
+            } => {
+                files = page_files;
+                if opts.title.is_none() && note.title != title && !title.is_empty() {
+                    note.title = unique_title(self, &md_escape_title(&title));
+                }
+                let words = word_count(&markdown);
+                let mut body = format!("# {}\n\nsource:: {url}\n{project_line}", note.title);
+                if let Some(d) = &description {
+                    body.push_str(&format!("\n> {}\n", d.replace('\n', " ")));
+                }
+                body.push_str(&format!(
+                    "\nArchived copy: [page.html]({}){}. {} word{}.\n\n---\n\n{}\n",
+                    encode_md_path(&format!("{folder}/page.html")),
+                    if has_shot {
+                        format!(
+                            ", [screenshot]({})",
+                            encode_md_path(&format!("{folder}/screenshot.png"))
+                        )
+                    } else {
+                        String::new()
+                    },
+                    words,
+                    if words == 1 { "" } else { "s" },
+                    markdown
+                ));
+                note.body = body;
+                note.properties.insert("hash".into(), json!(hash));
+                note.properties.insert("words".into(), json!(words));
+                format!("Saved \"{}\" ({} words, {} images)", note.title, words, image_count)
+            }
+            Fetched::Video {
+                info,
+                video_rel,
+                thumb_rel,
+            } => {
+                let v = parse_video_info(&info);
+                if opts.title.is_none() && !v.title.is_empty() {
+                    note.title = unique_title(self, &md_escape_title(&v.title));
+                }
+                let mut body = format!(
+                    "# {}\n\nsource:: {}\n{project_line}",
+                    note.title,
+                    v.webpage_url.as_deref().unwrap_or(url)
+                );
+                let mut facts = Vec::new();
+                if let Some(u) = &v.uploader {
+                    facts.push(u.clone());
+                }
+                if let Some(d) = &v.upload_date {
+                    facts.push(d.clone());
+                }
+                if let Some(d) = v.duration {
+                    facts.push(hms(d));
+                }
+                if !facts.is_empty() {
+                    body.push_str(&format!("\n{}\n", facts.join(" · ")));
+                }
+                if let Some(t) = &thumb_rel {
+                    body.push_str(&format!("\n![thumbnail]({})\n", encode_md_path(t)));
+                }
+                if let Some(vp) = &video_rel {
+                    body.push_str(&format!("\n![video]({})\n", encode_md_path(vp)));
+                }
+                if !v.chapters.is_empty() {
+                    body.push_str("\n## Chapters\n\n");
+                    for (t, name) in &v.chapters {
+                        body.push_str(&format!("- {} {}\n", hms(*t), name));
+                    }
+                }
+                if let Some(d) = &v.description {
+                    if !d.trim().is_empty() {
+                        body.push_str(&format!("\n## Description\n\n{}\n", d.trim()));
+                    }
+                }
+                note.body = body;
+                note.properties.insert("hash".into(), json!(v.id));
+                note.properties.insert("video_title".into(), json!(v.title));
+                if let Some(d) = v.duration {
+                    note.properties.insert("duration".into(), json!(d));
+                }
+                if let Some(vp) = &video_rel {
+                    note.properties.insert("video".into(), json!(vp));
+                    files.push(vp.clone());
+                }
+                if let Some(t) = &thumb_rel {
+                    files.push(t.clone());
+                }
+                format!(
+                    "Downloaded \"{}\"{}",
+                    v.title,
+                    v.duration.map(|d| format!(" ({})", hms(d))).unwrap_or_default()
+                )
+            }
+            Fetched::File {
+                name,
+                rel,
+                hash,
+                pdf_title,
+            } => {
+                files.push(rel.clone());
+                let is_asset_embed = matches!(
+                    crate::assets::AssetKind::from_ext(name.rsplit('.').next().unwrap_or("")),
+                    crate::assets::AssetKind::Image
+                        | crate::assets::AssetKind::Vector
+                        | crate::assets::AssetKind::Video
+                        | crate::assets::AssetKind::Audio
+                        | crate::assets::AssetKind::Pdf
+                        | crate::assets::AssetKind::Model
+                );
+                if let Some(t) = pdf_title {
+                    note.title = unique_title(self, &md_escape_title(&t));
+                }
+                let mut body = format!("# {}\n\nsource:: {url}\n{project_line}\n", note.title);
+                body.push_str(&format!(
+                    "{}[{}]({})\n",
+                    if is_asset_embed { "!" } else { "" },
+                    name,
+                    encode_md_path(&rel)
+                ));
+                note.body = body;
+                note.properties.insert("hash".into(), json!(hash));
+                note.properties.insert("file".into(), json!(rel));
+                format!("Downloaded {name}")
+            }
+        };
+        note.properties.insert("fetched".into(), json!(Utc::now().to_rfc3339()));
+        note.properties.insert("update_available".into(), json!(false));
+        note.properties.remove("update_summary");
+        let note = self.write(&note)?;
+        let note = self.rename_to_title(note)?;
+        // The files just written are assets: index them now rather than at the next sync.
+        self.sync()?;
+        Ok(ImportReport {
+            note,
+            kind,
+            folder,
+            files,
+            summary,
+        })
     }
 
     /// Every `type: source` note with its record fields.
@@ -792,7 +1580,14 @@ impl Vault {
 
     /// Compare one source with its remote and record the outcome in the note.
     pub fn check_source(&mut self, id: &str) -> Result<UpdateCheck> {
-        let mut note = self.read(id)?;
+        let job = self.begin_check(id)?;
+        let outcome = job.probe()?;
+        self.finish_check(job, outcome)
+    }
+
+    /// First step of `check_source`: what to compare against.
+    pub fn begin_check(&self, id: &str) -> Result<PendingCheck> {
+        let note = self.read(id)?;
         if note.note_type != SOURCE_TYPE {
             return Err(other(format!("{} is not a source note", note.title)));
         }
@@ -800,82 +1595,25 @@ impl Vault {
         let kind = prop_str(&note, "source_type")
             .and_then(|k| SourceKind::parse(&k))
             .unwrap_or_else(|| classify_url(&url));
-        let hash = prop_str(&note, "hash").unwrap_or_default();
-        let (changed, summary) = match kind {
-            SourceKind::Github | SourceKind::Git => {
-                let head = remote_head(&url).map_err(other)?;
-                if head == hash {
-                    (false, format!("Up to date at {}", &head[..7.min(head.len())]))
-                } else {
-                    let short = |c: &str| c[..7.min(c.len())].to_string();
-                    let summary = if hash.is_empty() {
-                        format!("Upstream is at {}", short(&head))
-                    } else {
-                        format!("New commits: {} (have {})", short(&head), short(&hash))
-                    };
-                    (true, summary)
-                }
-            }
-            SourceKind::Page => {
-                let (html, _) = fetch_text(&url)?;
-                let page = extract_page(&url, &html);
-                let new_hash = sha256_str(&page.markdown);
-                if new_hash == hash {
-                    (false, "Page text unchanged".into())
-                } else {
-                    let old_words = prop_str(&note, "words")
-                        .and_then(|w| w.parse::<i64>().ok())
-                        .unwrap_or(0);
-                    let new_words = word_count(&page.markdown) as i64;
-                    let delta = new_words - old_words;
-                    (
-                        true,
-                        format!(
-                            "Page text changed ({} words, {}{})",
-                            new_words,
-                            if delta >= 0 { "+" } else { "" },
-                            delta
-                        ),
-                    )
-                }
-            }
-            SourceKind::Video => {
-                if !tools().yt_dlp {
-                    return Err(other("yt-dlp is not installed"));
-                }
-                let out = run(
-                    "yt-dlp",
-                    &["--dump-single-json", "--no-playlist", "--no-warnings", &url],
-                    None,
-                )
-                .map_err(other)?;
-                let info: Value = serde_json::from_str(&out).map_err(|e| other(format!("yt-dlp output: {e}")))?;
-                let v = parse_video_info(&info);
-                let file_ok = prop_str(&note, "video")
-                    .and_then(|p| self.safe_join(&p).ok())
-                    .map(|p| p.is_file())
-                    .unwrap_or(false);
-                if !file_ok {
-                    (true, "Video file is missing from the vault".into())
-                } else if v.id != hash && !hash.is_empty() {
-                    (true, format!("Video id changed to {}", v.id))
-                } else if Some(v.title.as_str()) != prop_str(&note, "video_title").as_deref() {
-                    (true, format!("Title changed: {}", v.title))
-                } else {
-                    (false, "Video unchanged".into())
-                }
-            }
-            SourceKind::Pdf | SourceKind::File => {
-                let tmp = self.derived_dir().join(format!("check-{}", sha256_str(&url)));
-                let (new_hash, _) = fetch_to_file(&resolve_pdf_url(&url), &tmp)?;
-                let _ = fs::remove_file(&tmp);
-                if new_hash == hash {
-                    (false, "File unchanged".into())
-                } else {
-                    (true, "File changed on the server".into())
-                }
-            }
-        };
+        Ok(PendingCheck {
+            note_id: note.id.clone(),
+            tmp: self.derived_dir().join(format!("check-{}", sha256_str(&url))),
+            url,
+            kind,
+            hash: prop_str(&note, "hash").unwrap_or_default(),
+            words: prop_str(&note, "words")
+                .and_then(|w| w.parse::<i64>().ok())
+                .unwrap_or(0),
+            video_title: prop_str(&note, "video_title"),
+            video_file_ok: prop_str(&note, "video")
+                .and_then(|p| self.safe_join(&p).ok())
+                .is_some_and(|p| p.is_file()),
+        })
+    }
+
+    /// Last step of `check_source`: record the outcome on the note.
+    pub fn finish_check(&mut self, job: PendingCheck, (changed, summary): (bool, String)) -> Result<UpdateCheck> {
+        let mut note = self.read(&job.note_id)?;
         let now = Utc::now();
         note.properties.insert("last_checked".into(), json!(now.to_rfc3339()));
         note.properties.insert("update_available".into(), json!(changed));
@@ -884,45 +1622,45 @@ impl Vault {
         Ok(UpdateCheck {
             note_id: note.id,
             title: note.title,
-            kind,
+            kind: job.kind,
             changed,
             summary,
             checked: now,
         })
     }
 
+    /// Sources not checked within `max_age` (all of them when `None`).
+    pub fn sources_due(&self, max_age: Option<Duration>) -> Result<Vec<SourceRow>> {
+        let now = Utc::now();
+        Ok(self
+            .sources()?
+            .into_iter()
+            .filter(|row| {
+                let (Some(age), Some(last)) = (
+                    max_age,
+                    row.last_checked
+                        .as_deref()
+                        .and_then(|s| DateTime::parse_from_rfc3339(s).ok()),
+                ) else {
+                    return true;
+                };
+                !now.signed_duration_since(last.with_timezone(&Utc))
+                    .to_std()
+                    .map(|d| d < age)
+                    .unwrap_or(true)
+            })
+            .collect())
+    }
+
     /// Check every source not checked within `max_age` (all of them when
     /// `None`). Errors are reported per source, not raised.
     pub fn check_all_sources(&mut self, max_age: Option<Duration>) -> Result<Vec<UpdateCheck>> {
         let mut out = Vec::new();
-        let now = Utc::now();
-        for row in self.sources()? {
-            if let (Some(age), Some(last)) = (
-                max_age,
-                row.last_checked
-                    .as_deref()
-                    .and_then(|s| DateTime::parse_from_rfc3339(s).ok()),
-            ) {
-                if now
-                    .signed_duration_since(last.with_timezone(&Utc))
-                    .to_std()
-                    .map(|d| d < age)
-                    .unwrap_or(true)
-                {
-                    continue;
-                }
-            }
-            match self.check_source(&row.note.id) {
-                Ok(c) => out.push(c),
-                Err(e) => out.push(UpdateCheck {
-                    note_id: row.note.id,
-                    title: row.note.title,
-                    kind: row.kind,
-                    changed: false,
-                    summary: format!("Check failed: {e}"),
-                    checked: now,
-                }),
-            }
+        for row in self.sources_due(max_age)? {
+            out.push(match self.check_source(&row.note.id) {
+                Ok(c) => c,
+                Err(e) => UpdateCheck::failed(&row, e),
+            });
         }
         Ok(out)
     }
@@ -993,327 +1731,6 @@ impl Vault {
         fs::create_dir_all(&abs)?;
         note.properties.insert("folder".into(), json!(rel));
         Ok((rel, abs))
-    }
-
-    fn run_import(
-        &mut self,
-        url: &str,
-        kind: SourceKind,
-        note: &mut Note,
-        opts: &ImportOptions,
-    ) -> Result<ImportReport> {
-        let (folder, dir) = self.source_folder(note)?;
-        let mut files = Vec::new();
-        let project_line = opts
-            .project
-            .clone()
-            .or_else(|| prop_str(note, "project").map(|p| p.trim_matches(['[', ']']).to_string()))
-            .map(|p| format!("project:: [[{p}]]\n"))
-            .unwrap_or_default();
-        let summary = match kind {
-            SourceKind::Github | SourceKind::Git => {
-                if !tools().git {
-                    return Err(other("git is not installed"));
-                }
-                let repo = dir.join("repo");
-                let clone = clone_url(url);
-                if repo.join(".git").is_dir() {
-                    run("git", &["fetch", "--depth", "1", "origin", "HEAD"], Some(&repo)).map_err(other)?;
-                    run("git", &["reset", "--hard", "FETCH_HEAD"], Some(&repo)).map_err(other)?;
-                } else {
-                    let _ = fs::remove_dir_all(&repo);
-                    run(
-                        "git",
-                        &["clone", "--depth", "1", "--quiet", &clone, &plain_path(&repo)],
-                        None,
-                    )
-                    .map_err(other)?;
-                }
-                let commit = run("git", &["rev-parse", "HEAD"], Some(&repo))
-                    .map_err(other)?
-                    .trim()
-                    .to_string();
-                let old = prop_str(note, "hash").unwrap_or_default();
-                let log = run("git", &["log", "-1", "--format=%cI%n%s"], Some(&repo)).unwrap_or_default();
-                let mut log_lines = log.lines();
-                let committed = log_lines.next().unwrap_or("").to_string();
-                let subject = log_lines.next().unwrap_or("").to_string();
-                let readme = readme_in(&repo);
-                let readme_rel = readme.as_ref().map(|(n, _)| format!("{folder}/repo/{n}"));
-                let mut body = format!("# {}\n\nsource:: {url}\n{project_line}\n", note.title);
-                let short = &commit[..7.min(commit.len())];
-                let subject_part = if subject.is_empty() {
-                    String::new()
-                } else {
-                    format!(" (\"{subject}\")")
-                };
-                let date_part = if committed.is_empty() {
-                    String::new()
-                } else {
-                    format!(", committed {}", &committed[..10.min(committed.len())])
-                };
-                let repo_rel = format!("{folder}/repo");
-                body.push_str(&format!(
-                    "Cloned at commit `{short}`{subject_part}{date_part}. Files are in [{repo_rel}]({}).\n",
-                    encode_md_path(&repo_rel)
-                ));
-                if let Some((name, text)) = &readme {
-                    body.push_str(&format!("\n## {name}\n\n{}\n", demote_headings(text.trim())));
-                }
-                note.body = body;
-                note.properties.insert("hash".into(), json!(commit));
-                note.properties.insert("commit".into(), json!(commit));
-                if let Some(r) = readme_rel {
-                    files.push(r);
-                }
-                if old.is_empty() {
-                    format!("Cloned {} at {}", note.title, &commit[..7.min(commit.len())])
-                } else if old == commit {
-                    "Already at the latest commit".to_string()
-                } else {
-                    format!(
-                        "Updated {} → {}",
-                        &old[..7.min(old.len())],
-                        &commit[..7.min(commit.len())]
-                    )
-                }
-            }
-            SourceKind::Page => {
-                let (html, _) = fetch_text(url)?;
-                let page = extract_page(url, &html);
-                let page_html = dir.join("page.html");
-                fs::write(&page_html, &html)?;
-                files.push(format!("{folder}/page.html"));
-                // Images: download what the readable text references, rewrite to local paths.
-                let mut markdown = page.markdown.clone();
-                let img_dir = dir.join("images");
-                for (i, img) in page.images.iter().take(MAX_PAGE_IMAGES).enumerate() {
-                    let name = image_name(img, i);
-                    let dest = img_dir.join(&name);
-                    if dest.is_file() || fetch_to_file(img, &dest).is_ok() {
-                        let rel = format!("{folder}/images/{name}");
-                        files.push(rel.clone());
-                        markdown = markdown.replace(&format!("]({img})"), &format!("]({})", encode_md_path(&rel)));
-                    }
-                }
-                let shot = dir.join("screenshot.png");
-                let has_shot = shot.is_file() || screenshot(url, &shot);
-                if has_shot {
-                    files.push(format!("{folder}/screenshot.png"));
-                }
-                if opts.title.is_none() && note.title != page.title && !page.title.is_empty() {
-                    note.title = unique_title(self, &md_escape_title(&page.title));
-                }
-                let words = word_count(&markdown);
-                let mut body = format!("# {}\n\nsource:: {url}\n{project_line}", note.title);
-                if let Some(d) = &page.description {
-                    body.push_str(&format!("\n> {}\n", d.replace('\n', " ")));
-                }
-                body.push_str(&format!(
-                    "\nArchived copy: [page.html]({}){}. {} word{}.\n\n---\n\n{}\n",
-                    encode_md_path(&format!("{folder}/page.html")),
-                    if has_shot {
-                        format!(
-                            ", [screenshot]({})",
-                            encode_md_path(&format!("{folder}/screenshot.png"))
-                        )
-                    } else {
-                        String::new()
-                    },
-                    words,
-                    if words == 1 { "" } else { "s" },
-                    markdown
-                ));
-                note.body = body;
-                note.properties.insert("hash".into(), json!(sha256_str(&page.markdown)));
-                note.properties.insert("words".into(), json!(words));
-                format!(
-                    "Saved \"{}\" ({} words, {} images)",
-                    note.title,
-                    words,
-                    page.images.len().min(MAX_PAGE_IMAGES)
-                )
-            }
-            SourceKind::Video => {
-                if !tools().yt_dlp {
-                    return Err(other(
-                        "yt-dlp is not installed; install it (pip install yt-dlp) to import videos",
-                    ));
-                }
-                let template = dir.join("%(title).120B [%(id)s].%(ext)s");
-                let template = template.to_string_lossy().into_owned();
-                let mut args = vec![
-                    "--no-playlist",
-                    "--no-warnings",
-                    "--no-overwrites",
-                    "-f",
-                    "bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b",
-                    "--write-thumbnail",
-                    "--write-info-json",
-                    "--restrict-filenames",
-                    "-o",
-                    &template,
-                ];
-                if tools().ffmpeg {
-                    args.extend(["--merge-output-format", "mp4", "--convert-thumbnails", "jpg"]);
-                }
-                args.push(url);
-                run("yt-dlp", &args, None).map_err(other)?;
-                // Find what it wrote.
-                let mut info_path = None;
-                let mut video_path = None;
-                let mut thumb_path = None;
-                for entry in fs::read_dir(&dir)?.flatten() {
-                    let p = entry.path();
-                    let name = p.file_name().unwrap_or_default().to_string_lossy().into_owned();
-                    if name.ends_with(".info.json") {
-                        info_path = Some(p);
-                    } else if name.ends_with(".jpg") || name.ends_with(".webp") || name.ends_with(".png") {
-                        thumb_path = Some(p);
-                    } else if matches!(
-                        p.extension().and_then(|e| e.to_str()),
-                        Some("mp4" | "mkv" | "webm" | "m4a" | "mp3")
-                    ) {
-                        video_path = Some(p);
-                    }
-                }
-                let info: Value = info_path
-                    .as_ref()
-                    .and_then(|p| fs::read_to_string(p).ok())
-                    .and_then(|s| serde_json::from_str(&s).ok())
-                    .unwrap_or(Value::Null);
-                let v = parse_video_info(&info);
-                let video_rel = video_path
-                    .as_ref()
-                    .map(|p| format!("{folder}/{}", p.file_name().unwrap().to_string_lossy()));
-                let thumb_rel = thumb_path
-                    .as_ref()
-                    .map(|p| format!("{folder}/{}", p.file_name().unwrap().to_string_lossy()));
-                if opts.title.is_none() && !v.title.is_empty() {
-                    note.title = unique_title(self, &md_escape_title(&v.title));
-                }
-                let mut body = format!(
-                    "# {}\n\nsource:: {}\n{project_line}",
-                    note.title,
-                    v.webpage_url.as_deref().unwrap_or(url)
-                );
-                let mut facts = Vec::new();
-                if let Some(u) = &v.uploader {
-                    facts.push(u.clone());
-                }
-                if let Some(d) = &v.upload_date {
-                    facts.push(d.clone());
-                }
-                if let Some(d) = v.duration {
-                    facts.push(hms(d));
-                }
-                if !facts.is_empty() {
-                    body.push_str(&format!("\n{}\n", facts.join(" · ")));
-                }
-                if let Some(t) = &thumb_rel {
-                    body.push_str(&format!("\n![thumbnail]({})\n", encode_md_path(t)));
-                }
-                if let Some(vp) = &video_rel {
-                    body.push_str(&format!("\n![video]({})\n", encode_md_path(vp)));
-                }
-                if !v.chapters.is_empty() {
-                    body.push_str("\n## Chapters\n\n");
-                    for (t, name) in &v.chapters {
-                        body.push_str(&format!("- {} {}\n", hms(*t), name));
-                    }
-                }
-                if let Some(d) = &v.description {
-                    if !d.trim().is_empty() {
-                        body.push_str(&format!("\n## Description\n\n{}\n", d.trim()));
-                    }
-                }
-                note.body = body;
-                note.properties.insert("hash".into(), json!(v.id));
-                note.properties.insert("video_title".into(), json!(v.title));
-                if let Some(d) = v.duration {
-                    note.properties.insert("duration".into(), json!(d));
-                }
-                if let Some(vp) = &video_rel {
-                    note.properties.insert("video".into(), json!(vp));
-                    files.push(vp.clone());
-                }
-                if let Some(t) = &thumb_rel {
-                    files.push(t.clone());
-                }
-                format!(
-                    "Downloaded \"{}\"{}",
-                    v.title,
-                    v.duration.map(|d| format!(" ({})", hms(d))).unwrap_or_default()
-                )
-            }
-            SourceKind::Pdf | SourceKind::File => {
-                let fetch_url = if kind == SourceKind::Pdf {
-                    resolve_pdf_url(url)
-                } else {
-                    url.to_string()
-                };
-                let guess = url_path(&fetch_url).rsplit('/').next().unwrap_or("").to_string();
-                let mut name = safe_attachment_name(&guess);
-                if kind == SourceKind::Pdf && !name.to_ascii_lowercase().ends_with(".pdf") {
-                    name = format!("{}.pdf", name.trim_end_matches('.'));
-                }
-                let tmp = dir.join("download.part");
-                let (hash, disposition) = fetch_to_file(&fetch_url, &tmp)?;
-                if let Some(d) = disposition {
-                    let d = safe_attachment_name(&d);
-                    if d != "file" && d.contains('.') {
-                        name = d;
-                    }
-                }
-                if name == "file" || name.is_empty() {
-                    name = format!("download-{}", &hash[..8]);
-                }
-                let dest = dir.join(&name);
-                let _ = fs::remove_file(&dest);
-                fs::rename(&tmp, &dest)?;
-                let rel = format!("{folder}/{name}");
-                files.push(rel.clone());
-                let is_asset_embed = matches!(
-                    crate::assets::AssetKind::from_ext(name.rsplit('.').next().unwrap_or("")),
-                    crate::assets::AssetKind::Image
-                        | crate::assets::AssetKind::Vector
-                        | crate::assets::AssetKind::Video
-                        | crate::assets::AssetKind::Audio
-                        | crate::assets::AssetKind::Pdf
-                        | crate::assets::AssetKind::Model
-                );
-                if kind == SourceKind::Pdf && opts.title.is_none() {
-                    if let Some(t) = pdf_title(&dest) {
-                        note.title = unique_title(self, &md_escape_title(&t));
-                    }
-                }
-                let mut body = format!("# {}\n\nsource:: {url}\n{project_line}\n", note.title);
-                body.push_str(&format!(
-                    "{}[{}]({})\n",
-                    if is_asset_embed { "!" } else { "" },
-                    name,
-                    encode_md_path(&rel)
-                ));
-                note.body = body;
-                note.properties.insert("hash".into(), json!(hash));
-                note.properties.insert("file".into(), json!(rel));
-                format!("Downloaded {name}")
-            }
-        };
-        note.properties.insert("fetched".into(), json!(Utc::now().to_rfc3339()));
-        note.properties.insert("update_available".into(), json!(false));
-        note.properties.remove("update_summary");
-        let note = self.write(note)?;
-        let note = self.rename_to_title(note)?;
-        // The files just written are assets: index them now rather than at the next sync.
-        self.sync()?;
-        Ok(ImportReport {
-            note,
-            kind,
-            folder,
-            files,
-            summary,
-        })
     }
 }
 
@@ -1584,7 +2001,19 @@ mod tests {
         assert!(report.note.body.contains("## Widget"), "{}", report.note.body);
         assert!(report.note.body.contains("A widget library."));
         assert_eq!(prop_str(&report.note, "commit").as_deref(), Some(first.as_str()));
-        assert!(dir.path().join(&report.folder).join("repo/README.md").is_file());
+        let readme = dir.path().join(&report.folder).join("repo/README.md");
+        // Compare without line endings: git on Windows may check out CRLF.
+        let readme_text = || fs::read_to_string(&readme).unwrap().replace("\r\n", "\n");
+        assert_eq!(readme_text(), "# Widget\n\nA widget library.\n");
+        // The checkout's files are the repository's: not notes, not listed files.
+        v.sync().unwrap();
+        assert_eq!(v.list().unwrap().len(), 1, "{:?}", v.list().unwrap());
+        assert!(v.assets(None, None).unwrap().iter().all(|a| !a.path.contains("/repo/")));
+        assert_eq!(
+            readme_text(),
+            "# Widget\n\nA widget library.\n",
+            "no id written into the repository"
+        );
         assert!(!v.check_source(&report.note.id).unwrap().changed);
 
         fs::write(up.join("README.md"), "# Widget\n\nA widget library, now with gears.\n").unwrap();
@@ -1596,5 +2025,143 @@ mod tests {
         assert!(again.note.body.contains("now with gears"));
         assert!(again.summary.starts_with("Updated"), "{}", again.summary);
         assert!(!v.check_source(&report.note.id).unwrap().changed);
+    }
+    /// HTTP server answering each GET path with `route(path)`: status, content type, body.
+    fn serve_routes(route: impl Fn(&str) -> (u16, &'static str, Vec<u8>) + Send + Sync + 'static) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let route = Arc::new(route);
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let route = route.clone();
+                std::thread::spawn(move || {
+                    let mut reader = BufReader::new(stream.try_clone().unwrap());
+                    let mut line = String::new();
+                    reader.read_line(&mut line).unwrap();
+                    let path = line.split_whitespace().nth(1).unwrap_or("/").to_string();
+                    loop {
+                        let mut h = String::new();
+                        if reader.read_line(&mut h).unwrap_or(0) == 0 || h == "\r\n" {
+                            break;
+                        }
+                    }
+                    let (status, ctype, data) = route(&path);
+                    let mut s = stream;
+                    let _ = write!(
+                        s,
+                        "HTTP/1.1 {status} X\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        data.len()
+                    );
+                    let _ = s.write_all(&data);
+                });
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    #[test]
+    fn downloads_a_github_repository_without_git() {
+        // GitHub's zipball: every entry inside one `<owner>-<repo>-<sha>/` folder.
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let opts = zip::write::SimpleFileOptions::default();
+        zip.add_directory("acme-widget-abc1234/", opts).unwrap();
+        zip.start_file("acme-widget-abc1234/README.md", opts).unwrap();
+        zip.write_all(b"# Widget\n\nA widget library.\n").unwrap();
+        zip.start_file("acme-widget-abc1234/src/lib.rs", opts).unwrap();
+        zip.write_all(b"pub fn spin() {}\n").unwrap();
+        let zip = zip.finish().unwrap().into_inner();
+        let sha = "abc1234def5678";
+        let base = serve_routes(move |path| {
+            match path {
+            "/repos/acme/widget/commits/HEAD" => (
+                200,
+                "application/json",
+                format!(r#"{{"sha":"{sha}","commit":{{"message":"Add gears\n\nlong text","committer":{{"date":"2026-10-01T10:00:00Z"}}}}}}"#)
+                    .into_bytes(),
+            ),
+            p if p == format!("/repos/acme/widget/zipball/{sha}") => (200, "application/zip", zip.clone()),
+            _ => (404, "text/plain", b"not found".to_vec()),
+        }
+        });
+        std::env::set_var("GRAPHITE_GITHUB_API", &base);
+
+        assert_eq!(
+            github_repo("https://github.com/acme/widget/tree/main/src"),
+            Some(("acme".to_string(), "widget".to_string()))
+        );
+        assert_eq!(github_repo("https://gitlab.com/acme/widget"), None);
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        let (commit, date, subject) = github_download("acme", "widget", &repo).unwrap();
+        assert_eq!(commit, sha);
+        assert_eq!(date, "2026-10-01T10:00:00Z");
+        assert_eq!(subject, "Add gears");
+        assert_eq!(
+            fs::read_to_string(repo.join("README.md")).unwrap(),
+            "# Widget\n\nA widget library.\n"
+        );
+        assert!(repo.join("src/lib.rs").is_file());
+        assert!(!dir.path().join("repo.zip.part").exists(), "the archive is removed");
+        assert_eq!(github_head("acme", "widget").unwrap().0, sha);
+        let missing = github_download("acme", "nothing", &dir.path().join("x")).unwrap_err();
+        assert!(missing.to_string().contains("no public repository"), "{missing}");
+    }
+
+    #[test]
+    fn installs_yt_dlp_after_checking_its_checksum() {
+        let Some(asset) = yt_dlp_asset() else { return };
+        let program = b"#!/bin/sh\necho fake yt-dlp\n".to_vec();
+        let good = format!("{:x}", Sha256::digest(&program));
+        let sums = Arc::new(Mutex::new(format!("{good}  {asset}\n0000  yt-dlp_other\n")));
+        let served = sums.clone();
+        let base = serve_routes(move |path| {
+            if path == "/SHA2-256SUMS" {
+                (200, "text/plain", served.lock().unwrap().clone().into_bytes())
+            } else if path == format!("/{asset}") {
+                (200, "application/octet-stream", program.clone())
+            } else {
+                (404, "text/plain", Vec::new())
+            }
+        });
+        let tools_home = tempfile::tempdir().unwrap();
+        std::env::set_var("GRAPHITE_TOOLS_DIR", tools_home.path());
+        std::env::set_var("GRAPHITE_YT_DLP_URL", &base);
+
+        *sums.lock().unwrap() = format!("{}  {asset}\n", "f".repeat(64));
+        let bad = install_yt_dlp().unwrap_err();
+        assert!(bad.to_string().contains("checksum"), "{bad}");
+        assert_eq!(fs::read_dir(tools_home.path()).unwrap().count(), 0, "nothing kept");
+
+        *sums.lock().unwrap() = format!("{good}  {asset}\n");
+        let path = install_yt_dlp().unwrap();
+        assert!(path.starts_with(tools_home.path()));
+        assert_eq!(find_tool("yt-dlp").as_deref(), Some(path.as_path()));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o111, 0o111);
+        }
+        std::env::remove_var("GRAPHITE_TOOLS_DIR");
+        refresh_tools();
+    }
+
+    #[test]
+    fn a_failed_fetch_leaves_nothing_behind() {
+        std::env::set_var("GRAPHITE_BROWSER", "none");
+        let base = serve_routes(|_| (404, "text/plain", b"gone".to_vec()));
+        let dir = tempfile::tempdir().unwrap();
+        let mut v = Vault::open(dir.path()).unwrap();
+        let mut job = v
+            .begin_import(&format!("{base}/paper.pdf"), &ImportOptions::default())
+            .unwrap();
+        // The note exists while the fetch runs, with its folder recorded.
+        assert_eq!(v.sources().unwrap().len(), 1);
+        assert!(dir.path().join(&job.folder).is_dir());
+        let fetched = job.fetch();
+        assert!(fetched.is_err());
+        let folder = job.folder.clone();
+        assert!(v.finish_import(job, fetched).is_err());
+        assert!(v.sources().unwrap().is_empty());
+        assert!(!dir.path().join(folder).exists());
     }
 }

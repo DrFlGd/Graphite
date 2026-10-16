@@ -647,13 +647,7 @@ impl Vault {
 
         // Conflicted copies the sync client left next to notes, by note id.
         let mut copies: HashMap<String, Vec<(String, Note)>> = HashMap::new();
-        for entry in ignore::WalkBuilder::new(self.root())
-            .hidden(true)
-            .git_ignore(false)
-            .filter_entry(|e| e.file_name() != STATE_DIR)
-            .build()
-            .flatten()
-        {
+        for entry in crate::vault::walk(self.root()).flatten() {
             let path = entry.path();
             if !path.is_file() || path.extension().and_then(|e| e.to_str()) != Some("md") {
                 continue;

@@ -14,7 +14,7 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::OnceLock;
+use std::sync::RwLock;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -177,7 +177,7 @@ pub struct AssetHit {
 
 /// Which optional external programs are on the PATH. Everything degrades
 /// gracefully without them; the UI uses this to say what is missing.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Tools {
     pub ffmpeg: bool,
     pub ffprobe: bool,
@@ -190,10 +190,14 @@ pub struct Tools {
     pub browser: bool,
 }
 
-/// Probe the PATH once per process.
-pub fn tools() -> &'static Tools {
-    static TOOLS: OnceLock<Tools> = OnceLock::new();
-    TOOLS.get_or_init(|| Tools {
+static TOOLS: RwLock<Option<Tools>> = RwLock::new(None);
+
+/// Probe the PATH once per process (again after `refresh_tools`).
+pub fn tools() -> Tools {
+    if let Some(t) = *TOOLS.read().unwrap_or_else(|e| e.into_inner()) {
+        return t;
+    }
+    let t = Tools {
         ffmpeg: find_tool("ffmpeg").is_some(),
         ffprobe: find_tool("ffprobe").is_some(),
         pdfinfo: find_tool("pdfinfo").is_some(),
@@ -202,12 +206,28 @@ pub fn tools() -> &'static Tools {
         git: find_tool("git").is_some(),
         yt_dlp: find_tool("yt-dlp").is_some(),
         browser: crate::sources::browser_binary().is_some(),
-    })
+    };
+    *TOOLS.write().unwrap_or_else(|e| e.into_inner()) = Some(t);
+    t
 }
 
-/// Locate a program on the PATH (with `.exe`/`.cmd` on Windows).
+/// Forget what was found, after a tool was installed.
+pub fn refresh_tools() -> Tools {
+    *TOOLS.write().unwrap_or_else(|e| e.into_inner()) = None;
+    tools()
+}
+
+/// Where Graphite keeps programs it downloads itself (yt-dlp):
+/// `GRAPHITE_TOOLS_DIR`, else `Graphite/tools` in the user's local data folder.
+pub fn tools_dir() -> Option<PathBuf> {
+    if let Some(d) = std::env::var_os("GRAPHITE_TOOLS_DIR") {
+        return Some(PathBuf::from(d));
+    }
+    dirs::data_local_dir().map(|d| d.join("Graphite").join("tools"))
+}
+
+/// Locate a program on the PATH or in `tools_dir()` (with `.exe`/`.cmd` on Windows).
 pub fn find_tool(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
     let names: Vec<String> = if cfg!(windows) {
         vec![
             format!("{name}.exe"),
@@ -218,7 +238,8 @@ pub fn find_tool(name: &str) -> Option<PathBuf> {
     } else {
         vec![name.to_string()]
     };
-    for dir in std::env::split_paths(&path) {
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    for dir in std::env::split_paths(&path).chain(tools_dir()) {
         for n in &names {
             let p = dir.join(n);
             if p.is_file() {
@@ -229,8 +250,26 @@ pub fn find_tool(name: &str) -> Option<PathBuf> {
     None
 }
 
+/// A command for an external program, found the way `find_tool` finds it.
+/// On Windows it runs without flashing a console window.
+pub(crate) fn command(program: &str) -> Command {
+    let c = match find_tool(program) {
+        Some(p) => Command::new(p),
+        None => Command::new(program),
+    };
+    #[cfg(windows)]
+    let c = {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let mut c = c;
+        c.creation_flags(CREATE_NO_WINDOW);
+        c
+    };
+    c
+}
+
 fn run(cmd: &str, args: &[&str]) -> Option<String> {
-    let out = Command::new(cmd)
+    let out = command(cmd)
         .args(args)
         .stdin(Stdio::null())
         .stderr(Stdio::null())
