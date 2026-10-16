@@ -11,8 +11,9 @@ impl Vault {
     /// Copy a file from anywhere on disk into `attachments/` (or `folder`)
     /// and return its vault-relative path, the form that goes into Markdown.
     /// A file larger than the vault's large-file limit is not copied: the
-    /// result is then a `file://` URL to where it is.
-    pub fn import_attachment(&self, src: &Path, folder: Option<&str>) -> Result<String> {
+    /// result is then a `file://` URL to where it is. A copy is indexed
+    /// straight away, so it lists before the file watcher reports it.
+    pub fn import_attachment(&mut self, src: &Path, folder: Option<&str>) -> Result<String> {
         let name = src
             .file_name()
             .and_then(|n| n.to_str())
@@ -35,14 +36,16 @@ impl Vault {
         }
         let (rel, dest) = self.free_attachment_path(folder, name)?;
         fs::copy(src, &dest)?;
+        self.reindex_path(Path::new(&rel))?;
         Ok(rel)
     }
 
     /// Write bytes (a pasted image, a download) as a new attachment.
-    pub fn write_attachment(&self, name: &str, data: &[u8], folder: Option<&str>) -> Result<String> {
+    pub fn write_attachment(&mut self, name: &str, data: &[u8], folder: Option<&str>) -> Result<String> {
         let name = safe_attachment_name(name);
         let (rel, dest) = self.free_attachment_path(folder, &name)?;
         fs::write(&dest, data)?;
+        self.reindex_path(Path::new(&rel))?;
         Ok(rel)
     }
 
@@ -113,7 +116,7 @@ mod tests {
     #[test]
     fn imports_copy_and_never_overwrite() {
         let dir = tempfile::tempdir().unwrap();
-        let v = Vault::open(dir.path()).unwrap();
+        let mut v = Vault::open(dir.path()).unwrap();
         let src = tempfile::tempdir().unwrap();
         let file = src.path().join("photo.png");
         fs::write(&file, b"one").unwrap();
@@ -124,6 +127,8 @@ mod tests {
         assert_eq!(b, "attachments/photo-2.png");
         assert_eq!(fs::read(dir.path().join(&a)).unwrap(), b"one");
         assert_eq!(fs::read(dir.path().join(&b)).unwrap(), b"two");
+        // Listed at once, without waiting for the file watcher.
+        assert_eq!(v.assets(None, None).unwrap().len(), 2);
         // Already in the vault: referenced, not copied.
         let again = v.import_attachment(&dir.path().join(&a), None).unwrap();
         assert_eq!(again, a);
@@ -133,7 +138,7 @@ mod tests {
     #[test]
     fn large_files_are_referenced_in_place() {
         let dir = tempfile::tempdir().unwrap();
-        let v = Vault::open(dir.path()).unwrap();
+        let mut v = Vault::open(dir.path()).unwrap();
         v.save_config(&crate::config::VaultConfig { large_file_mb: 0 }).unwrap();
         let src = tempfile::tempdir().unwrap();
         let file = src.path().join("big movie.mov");
@@ -151,12 +156,13 @@ mod tests {
     #[test]
     fn writes_bytes_into_a_folder() {
         let dir = tempfile::tempdir().unwrap();
-        let v = Vault::open(dir.path()).unwrap();
+        let mut v = Vault::open(dir.path()).unwrap();
         let rel = v
             .write_attachment("clip:board?.png", b"\x89PNG", Some("attachments/Inbox"))
             .unwrap();
         assert_eq!(rel, "attachments/Inbox/clip-board-.png");
         assert!(dir.path().join(&rel).is_file());
+        assert_eq!(v.asset(&rel).unwrap().path, rel);
         assert_eq!(safe_attachment_name("  ..  "), "file");
     }
 }

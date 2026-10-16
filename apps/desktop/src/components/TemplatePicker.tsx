@@ -4,13 +4,18 @@ import { api, type Template } from '../api'
 interface Props {
   /** `create` asks for a title; `promote` turns the named note into a project. */
   mode: { kind: 'create' } | { kind: 'promote'; noteId: string; title: string }
+  /** Offer an empty note first (the phone has no separate "New note"). */
+  blank?: boolean
   onClose: () => void
   onDone: (noteId: string) => void
   onError: (e: string) => void
 }
 
 /** Pick a template (built-in or from the vault's templates/ folder). */
-export function TemplatePicker({ mode, onClose, onDone, onError }: Props) {
+/** The `blank` choice: no template, just an empty note. */
+const BLANK: Template = { name: 'note', description: 'An empty note.', note_type: 'note', folder: 'notes', properties: {}, body: '', builtin: true }
+
+export function TemplatePicker({ mode, blank, onClose, onDone, onError }: Props) {
   const [templates, setTemplates] = useState<Template[]>([])
   const [selected, setSelected] = useState<string>('')
   const [title, setTitle] = useState('')
@@ -21,13 +26,13 @@ export function TemplatePicker({ mode, onClose, onDone, onError }: Props) {
     api
       .templates()
       .then((list) => {
-        const usable = mode.kind === 'promote' ? list.filter((t) => t.note_type === 'project') : list
+        const usable = mode.kind === 'promote' ? list.filter((t) => t.note_type === 'project') : blank ? [BLANK, ...list.filter((t) => t.name !== BLANK.name)] : list
         setTemplates(usable)
-        setSelected(usable.find((t) => t.name === 'project')?.name ?? usable[0]?.name ?? '')
+        setSelected(blank ? BLANK.name : (usable.find((t) => t.name === 'project')?.name ?? usable[0]?.name ?? ''))
       })
       .catch((e) => onError(String(e)))
     input.current?.focus()
-  }, [mode.kind, onError])
+  }, [mode.kind, blank, onError])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -41,7 +46,9 @@ export function TemplatePicker({ mode, onClose, onDone, onError }: Props) {
     if (!selected || busy) return
     setBusy(true)
     try {
-      const note = mode.kind === 'create' ? await api.createFromTemplate(title.trim() || 'Untitled', selected) : await api.promoteToProject(mode.noteId, selected)
+      const name = title.trim() || 'Untitled'
+      const note =
+        mode.kind === 'promote' ? await api.promoteToProject(mode.noteId, selected) : blank && selected === BLANK.name ? await api.createNote(name) : await api.createFromTemplate(name, selected)
       onDone(note.id)
     } catch (e) {
       onError(String(e))
