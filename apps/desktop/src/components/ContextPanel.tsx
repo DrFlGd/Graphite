@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useState, type ReactNode } from 'react'
 import { Maximize2, Plus, X } from 'lucide-react'
+import { TypeIcon } from '../noteTypes'
 import { api, type Backlink, type Graph, type Note, type NoteSummary, type Outgoing } from '../api'
 import { GraphCanvas } from './GraphCanvas'
 
@@ -69,6 +70,7 @@ export function ContextPanel({ note, onOpen, onFollowLink, onShowGraph, onEdit }
         {linkers.length === 0 && <p className="context__empty">Nothing links here yet.</p>}
         {linkers.map((b) => (
           <button key={b.from.id} type="button" className="context__item" onClick={() => onOpen(b.from.id)} title={b.count > 1 ? `Links here ${b.count} times` : undefined}>
+            <TypeIcon type={b.from.type} size={13} />
             <span>{b.from.title}</span>
             {(b.relations.length > 0 || b.count > 1) && <span className="context__rel">{[...b.relations, b.count > 1 ? `×${b.count}` : ''].filter(Boolean).join(' · ')}</span>}
           </button>
@@ -89,7 +91,8 @@ export function ContextPanel({ note, onOpen, onFollowLink, onShowGraph, onEdit }
         <Section title={`Unlinked mentions (${mentions.length})`}>
           {mentions.map((m) => (
             <button key={m.id} type="button" className="context__item" onClick={() => onOpen(m.id)}>
-              {m.title}
+              <TypeIcon type={m.type} size={13} />
+              <span>{m.title}</span>
             </button>
           ))}
         </Section>

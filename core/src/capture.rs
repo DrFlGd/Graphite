@@ -14,6 +14,23 @@ pub const DAILY_DIR: &str = "notes/Daily";
 pub const CAPTURE_TYPE: &str = "capture";
 pub const DAILY_TYPE: &str = "daily";
 
+/// A daily note's title always carries its date, so a renamed day stays
+/// findable: `Garden day` for `notes/Daily/2026-10-15.md` becomes
+/// `Garden day (2026-10-15)`. Titles that already hold the date, and notes
+/// whose file name is not a date, are left alone.
+pub fn dated_daily_title(title: &str, rel: &str) -> String {
+    let stem = rel.rsplit('/').next().unwrap_or(rel).trim_end_matches(".md");
+    let title = title.trim();
+    if NaiveDate::parse_from_str(stem, "%Y-%m-%d").is_err() || title.contains(stem) {
+        return title.to_string();
+    }
+    if title.is_empty() {
+        stem.to_string()
+    } else {
+        format!("{title} ({stem})")
+    }
+}
+
 const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif"];
 
 impl Vault {
@@ -193,6 +210,31 @@ mod tests {
         assert_eq!(a.id, b.id);
         assert_eq!(a.path, "notes/Daily/2026-10-14.md");
         assert_eq!(a.note_type, "daily");
+    }
+
+    #[test]
+    fn renamed_daily_notes_keep_their_date() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut v = Vault::open(dir.path()).unwrap();
+        let mut day = v.daily_note(NaiveDate::from_ymd_opt(2026, 10, 14).unwrap()).unwrap();
+        day.title = "Garden day".into();
+        assert_eq!(v.write(&day).unwrap().title, "Garden day (2026-10-14)");
+        assert_eq!(v.read(&day.id).unwrap().title, "Garden day (2026-10-14)");
+        // Still today's note for the Today button.
+        assert_eq!(
+            v.daily_note(NaiveDate::from_ymd_opt(2026, 10, 14).unwrap()).unwrap().id,
+            day.id
+        );
+        assert_eq!(dated_daily_title("", "notes/Daily/2026-10-14.md"), "2026-10-14");
+        assert_eq!(
+            dated_daily_title("Trip 2026-10-14", "notes/Daily/2026-10-14.md"),
+            "Trip 2026-10-14"
+        );
+        assert_eq!(dated_daily_title("Log", "notes/Daily/log.md"), "Log");
+        // Retyped to an ordinary note, the title is the user's again.
+        day.note_type = "note".into();
+        day.title = "Garden day".into();
+        assert_eq!(v.write(&day).unwrap().title, "Garden day");
     }
 
     #[test]

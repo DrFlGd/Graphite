@@ -9,6 +9,7 @@ import { ProjectHub } from './components/ProjectHub'
 import { SyncDialog } from './components/SyncDialog'
 import { TemplatePicker } from './components/TemplatePicker'
 import { pickAndAttach } from './filePicker'
+import { TypeIcon } from './noteTypes'
 import { syncSummary } from './components/sync'
 import { snippetText } from './snippet'
 
@@ -320,7 +321,8 @@ export function MobileApp() {
       </div>
     )
   } else if (tab === 'notes') {
-    const rows: { id: string; title: string; sub: string }[] = hits ? hits.map((h) => ({ id: h.id, title: h.title, sub: snippetText(h.snippet) })) : recent.map((n) => ({ id: n.id, title: n.title, sub: n.path }))
+    const typeOf = new Map(notes.map((n) => [n.id, n.type]))
+    const rows: { id: string; title: string; sub: string; type?: string }[] = hits ? hits.map((h) => ({ id: h.id, title: h.title, sub: snippetText(h.snippet), type: typeOf.get(h.id) })) : recent.map((n) => ({ id: n.id, title: n.title, sub: n.path, type: n.type }))
     screen = (
       <div className="mobile__screen">
         <div className="mobile__search">
@@ -331,7 +333,9 @@ export function MobileApp() {
           {rows.map((r) => (
             <li key={r.id}>
               <button type="button" onClick={() => void openNote(r.id)}>
-                <span className="mobile__row-title">{r.title}</span>
+                <span className="mobile__row-title">
+                  <TypeIcon type={r.type} size={15} /> {r.title}
+                </span>
                 <span className="mobile__row-sub">{r.sub}</span>
               </button>
             </li>
@@ -353,7 +357,9 @@ export function MobileApp() {
           {projects.map((p) => (
             <li key={p.id}>
               <button type="button" onClick={() => void openNote(p.id)}>
-                <span className="mobile__row-title">{p.title}</span>
+                <span className="mobile__row-title">
+                  <TypeIcon type="project" size={15} /> {p.title}
+                </span>
                 <span className="mobile__row-sub">{p.tags.join(', ')}</span>
               </button>
             </li>

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Globe, Locate } from 'lucide-react'
 import { api, type Graph, type GraphNode, type NoteSummary } from '../api'
-import { GraphCanvas, TYPE_COLOURS } from './GraphCanvas'
+import { GraphCanvas } from './GraphCanvas'
+import { TYPE_COLOURS } from '../noteTypes'
 
 export type GraphMode = 'global' | 'local'
 

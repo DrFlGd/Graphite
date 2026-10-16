@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { forceCenter, forceCollide, forceLink, forceManyBody, forceSimulation, forceX, forceY, type Simulation, type SimulationLinkDatum, type SimulationNodeDatum } from 'd3-force'
 import type { Graph, GraphEdge, GraphNode } from '../api'
+import { TYPE_COLOURS } from '../noteTypes'
 
 interface Props {
   graph: Graph
@@ -25,22 +26,6 @@ interface View {
   k: number
 }
 
-/** Colour per note type; anything else uses the muted foreground. */
-export const TYPE_COLOURS: Record<string, string> = {
-  project: '#3b6ef5',
-  idea: '#e0a100',
-  area: '#2e9e5b',
-  source: '#8a5cf6',
-  capture: '#9a9ca4',
-  daily: '#1aa3a3',
-  task: '#e5673d',
-  gap: '#d2384f',
-  person: '#c45ab3',
-  decision: '#4f6d7a',
-  query: '#0f8b8d',
-  meeting: '#b5651d',
-  reading: '#6d8c2f',
-}
 
 const DRAG_THRESHOLD = 4
 

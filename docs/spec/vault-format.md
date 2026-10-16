@@ -170,7 +170,7 @@ Quick capture (global shortcut, CLI `graphite capture`, phone share sheet in M4)
 - A capture whose text is a single URL records it as the `source` property so later importers (M3) can pick it up.
 - Files dropped or pasted into a capture are copied to `attachments/Inbox/` (never moved) and referenced from the body: images as `![name](attachments/Inbox/name.png)`, everything else as `[name](attachments/Inbox/name.pdf)`. Name clashes get a `-2`, `-3` suffix.
 
-Daily notes live at `notes/Daily/YYYY-MM-DD.md` with `type: daily` and the date as title. Opening "today" creates the file if it does not exist and never overwrites it.
+Daily notes live at `notes/Daily/YYYY-MM-DD.md` with `type: daily` and the date as title. Opening "today" creates the file if it does not exist and never overwrites it. A daily note's title always carries its date: renamed to `Garden day`, it is saved as `Garden day (YYYY-MM-DD)`, and the file name stays the date.
 
 ### Projects, decisions and templates
 

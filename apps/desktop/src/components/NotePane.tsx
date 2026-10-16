@@ -3,6 +3,7 @@ import { NoteEditor, ToolButton, type Editor, type NoteCandidate } from '@graphi
 import { FileCode2, History, Trash2 } from 'lucide-react'
 import { api, type Note } from '../api'
 import { SourceBar } from './SourceBar'
+import { TypeChip, datedDailyTitle } from '../noteTypes'
 import { HistoryPanel } from './HistoryPanel'
 
 interface Props {
@@ -35,8 +36,9 @@ export function NotePane({ note, saveState, onChange, onFollowLink, onOpenFile, 
   return (
     <div className="note">
       <header className="note__header">
-        <TitleField value={note.title} onChange={(title) => onChange({ ...note, title })} />
+        <TitleField value={note.title} onChange={(title) => onChange({ ...note, title })} normalise={note.type === 'daily' ? (t) => datedDailyTitle(t, note.path) : undefined} />
         <div className="note__meta">
+          {note.type !== 'note' && <TypeChip type={note.type} icon />}
           <span className="note__path" title={note.path}>
             {note.path}
           </span>
@@ -134,8 +136,8 @@ function TagRow({ tags, onChange }: { tags: string[]; onChange: (tags: string[])
   )
 }
 
-/** The note title: one logical line that wraps instead of clipping. */
-function TitleField({ value, onChange }: { value: string; onChange: (title: string) => void }) {
+/** The note title: one logical line that wraps instead of clipping. `normalise` tidies it when the field loses focus. */
+function TitleField({ value, onChange, normalise }: { value: string; onChange: (title: string) => void; normalise?: (title: string) => string }) {
   const ref = useRef<HTMLTextAreaElement>(null)
   const fit = () => {
     const el = ref.current
@@ -158,6 +160,10 @@ function TitleField({ value, onChange }: { value: string; onChange: (title: stri
       rows={1}
       value={value}
       onChange={(e) => onChange(e.target.value.replace(/[\r\n]+/g, ' '))}
+      onBlur={() => {
+        const tidy = normalise?.(value)
+        if (tidy !== undefined && tidy !== value) onChange(tidy)
+      }}
       onKeyDown={(e) => {
         // Enter moves on to the text rather than adding a line to the title.
         if (e.key === 'Enter') {

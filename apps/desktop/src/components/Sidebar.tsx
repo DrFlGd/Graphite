@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { CalendarDays, Download, FilePlus2, FolderOpen, Inbox, LayoutTemplate, ListChecks, Paperclip, RefreshCw, Search, Settings2, Waypoints } from 'lucide-react'
 import type { NoteSummary, SyncStatus, VaultInfo } from '../api'
 import { syncSummary } from './sync'
+import { TypeChip, typeColour } from '../noteTypes'
 
 interface Props {
   vault: VaultInfo
@@ -81,17 +82,17 @@ export function Sidebar({ vault, notes, currentId, onOpen, onCreate, onCreateFro
       </div>
       <div className="sidebar__nav">
         <button type="button" className={`sidebar__nav-btn ${inboxOpen ? 'is-current' : ''}`} onClick={onInbox} title="Captured notes waiting to be filed">
-          <Inbox size={14} /> Inbox
+          <Inbox size={14} color={typeColour('capture')} /> Inbox
           {inboxCount > 0 && <span className="sidebar__count">{inboxCount}</span>}
         </button>
         <button type="button" className="sidebar__nav-btn" onClick={onToday} title="Today's daily note (Ctrl+D)">
-          <CalendarDays size={14} /> Today
+          <CalendarDays size={14} color={typeColour('daily')} /> Today
         </button>
         <button type="button" className={`sidebar__nav-btn ${graphOpen ? 'is-current' : ''}`} onClick={onGraph} title="Link graph (Ctrl+Shift+G)">
           <Waypoints size={14} /> Graph
         </button>
         <button type="button" className={`sidebar__nav-btn ${tasksOpen ? 'is-current' : ''}`} onClick={onTasks} title="Every open task in the vault (Ctrl+Shift+T)">
-          <ListChecks size={14} /> Tasks
+          <ListChecks size={14} color={typeColour('task')} /> Tasks
           {openTasks > 0 && <span className="sidebar__count sidebar__count--quiet">{openTasks}</span>}
         </button>
         <button type="button" className={`sidebar__nav-btn ${filesOpen ? 'is-current' : ''}`} onClick={onFiles} title="Every file in the vault: images, video, PDFs, 3D models (Ctrl+Shift+F)">
@@ -99,7 +100,7 @@ export function Sidebar({ vault, notes, currentId, onOpen, onCreate, onCreateFro
           {vault.asset_count > 0 && <span className="sidebar__count sidebar__count--quiet">{vault.asset_count}</span>}
         </button>
         <button type="button" className={`sidebar__nav-btn ${sourcesOpen ? 'is-current' : ''}`} onClick={onSources} title="Imported repos, pages, videos and files, and whether they changed upstream">
-          <Download size={14} /> Sources
+          <Download size={14} color={typeColour('source')} /> Sources
           {sourceUpdates > 0 && <span className="sidebar__count" title={`${sourceUpdates} changed upstream`}>{sourceUpdates}</span>}
         </button>
       </div>
@@ -142,7 +143,7 @@ export function Sidebar({ vault, notes, currentId, onOpen, onCreate, onCreateFro
                     title="Click to open here, Ctrl+click for a new tab"
                   >
                     <span className="sidebar__note-title">{n.title}</span>
-                    {n.type !== 'note' && <span className="sidebar__note-type">{n.type}</span>}
+                    {n.type !== 'note' && <TypeChip type={n.type} />}
                   </button>
                 </li>
               ))}
