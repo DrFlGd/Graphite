@@ -2002,13 +2002,15 @@ mod tests {
         assert!(report.note.body.contains("A widget library."));
         assert_eq!(prop_str(&report.note, "commit").as_deref(), Some(first.as_str()));
         let readme = dir.path().join(&report.folder).join("repo/README.md");
-        assert_eq!(fs::read_to_string(&readme).unwrap(), "# Widget\n\nA widget library.\n");
+        // Compare without line endings: git on Windows may check out CRLF.
+        let readme_text = || fs::read_to_string(&readme).unwrap().replace("\r\n", "\n");
+        assert_eq!(readme_text(), "# Widget\n\nA widget library.\n");
         // The checkout's files are the repository's: not notes, not listed files.
         v.sync().unwrap();
         assert_eq!(v.list().unwrap().len(), 1, "{:?}", v.list().unwrap());
         assert!(v.assets(None, None).unwrap().iter().all(|a| !a.path.contains("/repo/")));
         assert_eq!(
-            fs::read_to_string(&readme).unwrap(),
+            readme_text(),
             "# Widget\n\nA widget library.\n",
             "no id written into the repository"
         );
