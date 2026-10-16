@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { forceCenter, forceCollide, forceLink, forceManyBody, forceSimulation, type Simulation, type SimulationLinkDatum, type SimulationNodeDatum } from 'd3-force'
+import { forceCenter, forceCollide, forceLink, forceManyBody, forceSimulation, forceX, forceY, type Simulation, type SimulationLinkDatum, type SimulationNodeDatum } from 'd3-force'
 import type { Graph, GraphEdge, GraphNode } from '../api'
 
 interface Props {
@@ -11,6 +11,8 @@ interface Props {
   onOpen: (node: GraphNode) => void
   /** Small embedded version: tighter layout, labels always on. */
   compact?: boolean
+  /** Screen pixels at the bottom covered by something else (the legend). */
+  insetBottom?: number
   className?: string
 }
 
@@ -24,7 +26,7 @@ interface View {
 }
 
 /** Colour per note type; anything else uses the muted foreground. */
-const TYPE_COLOURS: Record<string, string> = {
+export const TYPE_COLOURS: Record<string, string> = {
   project: '#3b6ef5',
   idea: '#e0a100',
   area: '#2e9e5b',
@@ -35,6 +37,9 @@ const TYPE_COLOURS: Record<string, string> = {
   gap: '#d2384f',
   person: '#c45ab3',
   decision: '#4f6d7a',
+  query: '#0f8b8d',
+  meeting: '#b5651d',
+  reading: '#6d8c2f',
 }
 
 const DRAG_THRESHOLD = 4
@@ -44,7 +49,7 @@ const DRAG_THRESHOLD = 4
  * nodes, hover to highlight neighbours, click to open. Positions survive
  * data refreshes so the picture does not jump when a note is saved.
  */
-export function GraphCanvas({ graph, focusId, filter, onOpen, compact = false, className }: Props) {
+export function GraphCanvas({ graph, focusId, filter, onOpen, compact = false, insetBottom = 0, className }: Props) {
   const host = useRef<HTMLDivElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
   const state = useRef<{
@@ -57,9 +62,11 @@ export function GraphCanvas({ graph, focusId, filter, onOpen, compact = false, c
     dirty: boolean
     size: { w: number; h: number }
     settled: boolean
-  }>({ sim: null, nodes: [], links: [], view: { x: 0, y: 0, k: 1 }, hover: null, raf: 0, dirty: true, size: { w: 0, h: 0 }, settled: false })
-  const latest = useRef({ onOpen, focusId, filter, compact })
-  latest.current = { onOpen, focusId, filter, compact }
+    /** The user panned, zoomed or dragged: stop fitting the view for them. */
+    userMoved: boolean
+  }>({ sim: null, nodes: [], links: [], view: { x: 0, y: 0, k: 1 }, hover: null, raf: 0, dirty: true, size: { w: 0, h: 0 }, settled: false, userMoved: false })
+  const latest = useRef({ onOpen, focusId, filter, compact, insetBottom })
+  latest.current = { onOpen, focusId, filter, compact, insetBottom }
 
   // Build or update the simulation when the data changes.
   useEffect(() => {
@@ -93,13 +100,19 @@ export function GraphCanvas({ graph, focusId, filter, onOpen, compact = false, c
       )
       .force('charge', forceManyBody<SimNode>().strength(compact ? -90 : -180).distanceMax(600))
       .force('center', forceCenter(w / 2, h / 2).strength(0.05))
+      // Weak pull to the middle so notes without links do not drift off.
+      .force('x', forceX<SimNode>(w / 2).strength(0.06))
+      .force('y', forceY<SimNode>(h / 2).strength(0.06))
       .force('collide', forceCollide<SimNode>().radius((d) => d.r + 3))
       .alpha(prev.size ? 0.5 : 1)
       .alphaDecay(0.03)
       .on('tick', () => {
+        // Keep everything in view while the layout settles.
+        if (!st.userMoved) fit(st, latest.current.compact, latest.current.insetBottom)
         st.dirty = true
       })
       .on('end', () => {
+        if (!st.userMoved) fit(st, latest.current.compact, latest.current.insetBottom)
         st.settled = true
         st.dirty = true
       })
@@ -111,17 +124,14 @@ export function GraphCanvas({ graph, focusId, filter, onOpen, compact = false, c
     }
   }, [graph, compact])
 
-  // Fit the first layout into view once it has settled a little.
+  // A new focus or size of graph: fit it again until the user moves it.
   useEffect(() => {
     const st = state.current
-    st.view = { x: 0, y: 0, k: 1 }
-    const t = window.setTimeout(() => {
-      fit(st)
-      st.dirty = true
-    }, 600)
-    return () => window.clearTimeout(t)
+    st.userMoved = false
+    fit(st, compact, insetBottom)
+    st.dirty = true
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [graph === graph ? focusId : null, compact])
+  }, [focusId, compact])
 
   // Canvas sizing, drawing loop, and pointer handling.
   useEffect(() => {
@@ -141,6 +151,9 @@ export function GraphCanvas({ graph, focusId, filter, onOpen, compact = false, c
       cv.style.width = `${rect.width}px`
       cv.style.height = `${rect.height}px`
       st.sim?.force('center', forceCenter(rect.width / 2, rect.height / 2).strength(0.05))
+      st.sim?.force('x', forceX<SimNode>(rect.width / 2).strength(0.06))
+      st.sim?.force('y', forceY<SimNode>(rect.height / 2).strength(0.06))
+      if (!st.userMoved) fit(st, latest.current.compact, latest.current.insetBottom)
       st.dirty = true
     }
     resize()
@@ -256,7 +269,8 @@ export function GraphCanvas({ graph, focusId, filter, onOpen, compact = false, c
         }
         if (showAllLabels || isFocus || n === hover || n.degree >= 6) {
           ctx.fillStyle = n.node.missing ? c.muted : c.fg
-          const label = n.node.title.length > 28 ? n.node.title.slice(0, 27) + '…' : n.node.title
+          const max = labelChars(small)
+          const label = n.node.title.length > max ? n.node.title.slice(0, max - 1) + '…' : n.node.title
           ctx.fillText(label, n.x, n.y + r + 2 / k)
         }
       }
@@ -301,7 +315,10 @@ export function GraphCanvas({ graph, focusId, filter, onOpen, compact = false, c
       if (drag) {
         const dx = ev.clientX - drag.startX
         const dy = ev.clientY - drag.startY
-        if (!drag.moved && Math.hypot(dx, dy) > DRAG_THRESHOLD) drag.moved = true
+        if (!drag.moved && Math.hypot(dx, dy) > DRAG_THRESHOLD) {
+          drag.moved = true
+          st.userMoved = true
+        }
         if (!drag.moved) return
         if (drag.node) {
           const p = toWorld(ev)
@@ -335,6 +352,7 @@ export function GraphCanvas({ graph, focusId, filter, onOpen, compact = false, c
     }
     const onWheel = (ev: WheelEvent) => {
       ev.preventDefault()
+      st.userMoved = true
       const rect = cv.getBoundingClientRect()
       const px = ev.clientX - rect.left
       const py = ev.clientY - rect.top
@@ -376,8 +394,11 @@ export function GraphCanvas({ graph, focusId, filter, onOpen, compact = false, c
   )
 }
 
-/** Zoom/pan so every node is in view, with some padding. */
-function fit(st: { nodes: SimNode[]; view: View; size: { w: number; h: number } }) {
+/** Longest label drawn under a node, in characters; shorter in the side panel. */
+const labelChars = (compact: boolean) => (compact ? 18 : 28)
+
+/** Zoom/pan so every node and its label is in view. */
+function fit(st: { nodes: SimNode[]; view: View; size: { w: number; h: number } }, compact = false, insetBottom = 0) {
   const pts = st.nodes.filter((n) => n.x !== undefined && n.y !== undefined)
   if (pts.length === 0 || st.size.w === 0) return
   let minX = Infinity
@@ -390,9 +411,17 @@ function fit(st: { nodes: SimNode[]; view: View; size: { w: number; h: number } 
     maxX = Math.max(maxX, n.x! + n.r)
     maxY = Math.max(maxY, n.y! + n.r)
   }
-  const pad = 40
-  const w = maxX - minX + pad * 2
-  const h = maxY - minY + pad * 2 + 16
-  const k = Math.min(2, Math.max(0.15, Math.min(st.size.w / w, st.size.h / h)))
-  st.view = { k, x: (st.size.w - (maxX + minX) * k) / 2, y: (st.size.h - (maxY + minY) * k) / 2 }
+  // Labels are drawn at a fixed screen size, so their room is reserved in
+  // screen pixels: half the widest label on each side, a line below.
+  const fontPx = compact ? 11 : 12
+  const longest = Math.min(labelChars(compact), Math.max(0, ...pts.map((n) => n.node.title.length)))
+  const padX = Math.max(16, (longest * fontPx * 0.56) / 2 + 6)
+  const padTop = 12
+  const padBottom = fontPx + 10 + insetBottom
+  const availW = Math.max(20, st.size.w - padX * 2)
+  const availH = Math.max(20, st.size.h - padTop - padBottom)
+  const k = Math.min(compact ? 1.4 : 2, Math.max(0.15, Math.min(availW / Math.max(1, maxX - minX), availH / Math.max(1, maxY - minY))))
+  const cx = (minX + maxX) / 2
+  const cy = (minY + maxY) / 2
+  st.view = { k, x: st.size.w / 2 - cx * k, y: padTop + availH / 2 - cy * k }
 }
