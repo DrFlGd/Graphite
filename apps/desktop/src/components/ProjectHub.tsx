@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Download, FilePlus2, SquarePen } from 'lucide-react'
-import { api, type ItemRow, type ProjectHub as Hub, type SourceRow } from '../api'
+import { NoteEditor } from '@graphite/ui'
+import { api, assetUrl, type ItemRow, type Note, type ProjectHub as Hub, type SourceRow } from '../api'
 import { SourceKindIcon, shortUrl } from './sources'
-import { QueryView, type ViewKind } from './QueryView'
+import { ItemText, QueryView, type ViewKind } from './QueryView'
 import { FilesView } from './FilesView'
 
 interface Props {
@@ -16,6 +17,8 @@ interface Props {
   /** Open the import dialog with this project preselected. */
   onImport: (project: string) => void
   onOpen: (id: string, newTab?: boolean) => void
+  onFollowLink: (target: string) => void
+  onOpenUrl: (href: string) => void
   onChanged: () => void
   onError: (e: string) => void
   /** Switch this tab to the note's editor. */
@@ -27,8 +30,9 @@ interface Props {
  * open questions, decisions, sources and linked notes, all gathered from
  * the index. The note's own text is one click away.
  */
-export function ProjectHub({ noteId, version, vaultRoot, assetVersion, onOpenFile, onFilesChanged, onImport, onOpen, onChanged, onError, onEdit }: Props) {
+export function ProjectHub({ noteId, version, vaultRoot, assetVersion, onOpenFile, onFilesChanged, onImport, onOpen, onFollowLink, onOpenUrl, onChanged, onError, onEdit }: Props) {
   const [hub, setHub] = useState<Hub | null>(null)
+  const [note, setNote] = useState<Note | null>(null)
   const [sources, setSources] = useState<Map<string, SourceRow>>(() => new Map())
   const [query, setQuery] = useState<string | null>(null)
   const [view, setView] = useState<ViewKind>('tree')
@@ -43,6 +47,12 @@ export function ProjectHub({ noteId, version, vaultRoot, assetVersion, onOpenFil
         setQuery((q) => q ?? `type:task project:[[${h.project.title}]] status:open`)
       })
       .catch((e) => onError(String(e)))
+    api
+      .readNote(noteId)
+      .then((n) => {
+        if (!cancelled) setNote(n)
+      })
+      .catch(() => {})
     return () => {
       cancelled = true
     }
@@ -120,9 +130,27 @@ export function ProjectHub({ noteId, version, vaultRoot, assetVersion, onOpenFil
         </button>
       </header>
 
+      {note && hasText(note) && (
+        <details className="hub__about" open={note.body.length < 1500}>
+          <summary>About this project</summary>
+          <NoteEditor
+            docKey={`${note.id}:${note.updated ?? ''}`}
+            markdown={note.body}
+            title={note.title}
+            editable={false}
+            toolbar={false}
+            onChange={() => {}}
+            onFollowLink={(t) => onFollowLink(t)}
+            onOpenFile={(src) => onOpenFile(src)}
+            onOpenUrl={(href) => onOpenUrl(href)}
+            resolveSrc={(src) => assetUrl(vaultRoot, src)}
+          />
+        </details>
+      )}
+
       <section className="hub__section hub__section--tasks">
         <h3>Tasks</h3>
-        <QueryView query={query} onQueryChange={setQuery} view={view} onViewChange={setView} version={version} onOpen={onOpen} onChanged={onChanged} onError={onError} />
+        <QueryView query={query} onQueryChange={setQuery} view={view} onViewChange={setView} version={version} onOpen={onOpen} onFollowLink={onFollowLink} onChanged={onChanged} onError={onError} />
       </section>
 
       <div className="hub__columns">
@@ -135,13 +163,13 @@ export function ProjectHub({ noteId, version, vaultRoot, assetVersion, onOpenFil
           </div>
           {openGaps.length === 0 && <p className="hub__empty">Nothing waiting on an answer.</p>}
           {openGaps.map((g) => (
-            <GapLine key={`${g.note_id}:${g.line}`} gap={g} onOpen={onOpen} act={act} />
+            <GapLine key={`${g.note_id}:${g.line}`} gap={g} onOpen={onOpen} onFollow={onFollowLink} act={act} />
           ))}
           {answered.length > 0 && (
             <details className="hub__answered">
               <summary>{answered.length} answered</summary>
               {answered.map((g) => (
-                <GapLine key={`${g.note_id}:${g.line}`} gap={g} onOpen={onOpen} act={act} />
+                <GapLine key={`${g.note_id}:${g.line}`} gap={g} onOpen={onOpen} onFollow={onFollowLink} act={act} />
               ))}
             </details>
           )}
@@ -210,7 +238,14 @@ export function ProjectHub({ noteId, version, vaultRoot, assetVersion, onOpenFil
   )
 }
 
-function GapLine({ gap, onOpen, act }: { gap: ItemRow; onOpen: (id: string) => void; act: (f: () => Promise<unknown>) => Promise<void> }) {
+/** Whether the project note has text beyond a heading repeating its title. */
+function hasText(note: Note): boolean {
+  const lines = note.body.trim().split('\n')
+  if (lines[0]?.replace(/^#\s+/, '').trim().toLowerCase() === note.title.trim().toLowerCase()) lines.shift()
+  return lines.join('\n').trim().length > 0
+}
+
+function GapLine({ gap, onOpen, onFollow, act }: { gap: ItemRow; onOpen: (id: string) => void; onFollow: (target: string) => void; act: (f: () => Promise<unknown>) => Promise<void> }) {
   const answered = gap.status === 'answered'
   return (
     <div className={`qv__item qv__item--${gap.status} qv__item--gap`}>
@@ -227,7 +262,7 @@ function GapLine({ gap, onOpen, act }: { gap: ItemRow; onOpen: (id: string) => v
         {answered ? '✓' : '?'}
       </button>
       <button type="button" className="qv__item-text" onClick={() => onOpen(gap.note_id)} title={`In ${gap.note_title}`}>
-        {gap.text}
+        <ItemText text={gap.text} onFollow={onFollow} />
       </button>
       <span className="qv__badges">
         {gap.fields.blocks && <span className="qv__badge">blocks {gap.fields.blocks}</span>}

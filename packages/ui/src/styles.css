@@ -82,6 +82,9 @@
 .gr-prose li + li { margin-top: 0.2em; }
 /* List items hold a paragraph; without this each item gets a full paragraph gap and task boxes sit above their text. */
 .gr-prose li > p, .gr-prose li > div > p { margin-top: 0; margin-bottom: 0; }
+/* Inline fields such as `due:: 2026-10-16` (InlineFields). */
+.gr-prose .gr-field__key { font-size: 0.78em; color: var(--gr-fg-muted); background: var(--gr-bg-subtle); border-radius: 4px 0 0 4px; padding: 0.1em 0.3em; margin-left: 0.15em; }
+.gr-prose .gr-field__value { font-size: 0.86em; background: var(--gr-bg-subtle); border-radius: 0 4px 4px 0; padding: 0.1em 0.35em 0.1em 0; }
 /* A first heading that repeats the note title (DuplicateTitle). */
 .gr-prose .gr-dup-title { display: none; }
 .gr-prose img { max-width: 100%; height: auto; border-radius: var(--gr-radius); display: block; }

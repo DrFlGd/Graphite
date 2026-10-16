@@ -577,7 +577,7 @@ export function App() {
       case 'note': {
         const type = notes.find((n) => n.id === tab.noteId)?.type
         if (type === 'query' && !editingNotes.has(tab.noteId)) {
-          return <SavedQueryTab key={tab.id} noteId={tab.noteId} version={version} onOpen={openNote} onChanged={() => void refreshList()} onError={setError} onEdit={() => editAsNote(tab.noteId)} />
+          return <SavedQueryTab key={tab.id} noteId={tab.noteId} version={version} onOpen={openNote} onFollowLink={(t) => void followLink(t)} onChanged={() => void refreshList()} onError={setError} onEdit={() => editAsNote(tab.noteId)} />
         }
         if (type === 'project' && !editingNotes.has(tab.noteId)) {
           return (
@@ -591,6 +591,8 @@ export function App() {
               onFilesChanged={() => setAssetVersion((v) => v + 1)}
               onImport={(project) => setImporting({ project })}
               onOpen={openNote}
+              onFollowLink={(t) => void followLink(t)}
+              onOpenUrl={openExternal}
               onChanged={() => void refreshList()}
               onError={setError}
               onEdit={() => editAsNote(tab.noteId)}
@@ -630,7 +632,7 @@ export function App() {
       case 'inbox':
         return <InboxView key={tab.id} notes={notes} onOpen={(id) => openNote(id)} onImport={(url, captureId) => setImporting({ url, captureId })} onChanged={() => void refreshList()} onError={setError} />
       case 'tasks':
-        return <TasksView key={tab.id} notes={notes} version={version} onOpen={openNote} onChanged={() => void refreshList()} onError={setError} onSaveQuery={(q, v) => void saveQuery(q, v)} />
+        return <TasksView key={tab.id} notes={notes} version={version} onOpen={openNote} onFollowLink={(t) => void followLink(t)} onChanged={() => void refreshList()} onError={setError} onSaveQuery={(q, v) => void saveQuery(q, v)} />
       case 'files':
         return <FilesView key={tab.id} vaultRoot={vault.root} version={assetVersion} onOpen={openAsset} onChanged={() => setAssetVersion((v) => v + 1)} onError={setError} />
       case 'sources':

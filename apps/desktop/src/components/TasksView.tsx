@@ -8,6 +8,7 @@ interface Props {
   notes: NoteSummary[]
   version: number
   onOpen: (id: string, newTab?: boolean) => void
+  onFollowLink: (target: string) => void
   onChanged: () => void
   onError: (e: string) => void
   onSaveQuery: (query: string, view: ViewKind) => void
@@ -37,7 +38,7 @@ const store = (key: string, value: string) => {
  * state, in any of the query views. The query line is editable for anything
  * the controls do not cover.
  */
-export function TasksView({ notes, version, onOpen, onChanged, onError, onSaveQuery }: Props) {
+export function TasksView({ notes, version, onOpen, onFollowLink, onChanged, onError, onSaveQuery }: Props) {
   const [query, setQuery] = useState(() => stored(QUERY_KEY, DEFAULT_QUERY))
   const [view, setView] = useState<ViewKind>(() => {
     const v = stored(VIEW_KEY, 'tree')
@@ -109,7 +110,7 @@ export function TasksView({ notes, version, onOpen, onChanged, onError, onSaveQu
           </button>
         </form>
       </header>
-      <QueryView query={query} onQueryChange={setQuery} view={view} onViewChange={setView} version={version} onOpen={onOpen} onChanged={onChanged} onError={onError} onSave={onSaveQuery} extra={controls} />
+      <QueryView query={query} onQueryChange={setQuery} view={view} onViewChange={setView} version={version} onOpen={onOpen} onFollowLink={onFollowLink} onChanged={onChanged} onError={onError} onSave={onSaveQuery} extra={controls} />
     </div>
   )
 }

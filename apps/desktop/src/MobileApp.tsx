@@ -269,7 +269,7 @@ export function MobileApp() {
         </header>
         {hub && !editing ? (
           <div className="mobile__screen">
-            <ProjectHub noteId={hub} version={version} vaultRoot={vault.root} assetVersion={version} onOpenFile={() => setNotice('Open files on a desktop')} onFilesChanged={() => void refreshList()} onImport={() => setNotice('Import on a desktop')} onOpen={(id) => void openNote(id)} onChanged={() => void refreshList()} onError={setError} onEdit={() => setHub(null)} />
+            <ProjectHub noteId={hub} version={version} vaultRoot={vault.root} assetVersion={version} onOpenFile={() => setNotice('Open files on a desktop')} onFilesChanged={() => void refreshList()} onImport={() => setNotice('Import on a desktop')} onOpen={(id) => void openNote(id)} onFollowLink={(t) => void followLink(t)} onOpenUrl={(href) => void openUrl(href).catch((e) => setError(String(e)))} onChanged={() => void refreshList()} onError={setError} onEdit={() => setHub(null)} />
           </div>
         ) : (
           <div className="mobile__screen mobile__editor">
@@ -314,7 +314,7 @@ export function MobileApp() {
   } else if (tab === 'tasks') {
     screen = (
       <div className="mobile__screen">
-        <TasksView notes={notes} version={version} onOpen={(id) => void openNote(id)} onChanged={() => void refreshList()} onError={setError} onSaveQuery={() => setNotice('Save queries on a desktop')} />
+        <TasksView notes={notes} version={version} onOpen={(id) => void openNote(id)} onFollowLink={(t) => void followLink(t)} onChanged={() => void refreshList()} onError={setError} onSaveQuery={() => setNotice('Save queries on a desktop')} />
       </div>
     )
   } else {
