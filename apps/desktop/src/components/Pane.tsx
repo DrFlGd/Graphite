@@ -13,6 +13,9 @@ interface Props {
   onClose: (ti: number) => void
   onNewTab: () => void
   onSplit: () => void
+  /** Controls at the start and end of the tab bar (sidebar and side-panel toggles). */
+  leading?: ReactNode
+  trailing?: ReactNode
   children: ReactNode
 }
 
@@ -38,7 +41,7 @@ export function tabTitle(tab: Tab, notes: NoteSummary[]): string {
 }
 
 /** A column of tabs with one body: notes, the inbox or the graph. */
-export function Pane({ pane, active, notes, canSplit, onFocus, onSelect, onClose, onNewTab, onSplit, children }: Props) {
+export function Pane({ pane, active, notes, canSplit, onFocus, onSelect, onClose, onNewTab, onSplit, leading, trailing, children }: Props) {
   const icon = (t: Tab) => (t.kind === 'inbox' ? <Inbox size={13} /> : t.kind === 'graph' ? <Waypoints size={13} /> : t.kind === 'tasks' ? <ListChecks size={13} /> : t.kind === 'files' || t.kind === 'asset' ? <Paperclip size={13} /> : t.kind === 'sources' ? <Download size={13} /> : t.kind === 'note' ? <FileText size={13} /> : null)
   const middleClick = (e: MouseEvent, ti: number) => {
     if (e.button === 1) {
@@ -49,6 +52,7 @@ export function Pane({ pane, active, notes, canSplit, onFocus, onSelect, onClose
   return (
     <section className={`pane ${active ? 'is-active' : ''}`} onMouseDownCapture={onFocus} aria-label={active ? 'Active pane' : 'Pane'}>
       <div className="pane__tabs" role="tablist">
+        {leading}
         {pane.tabs.map((t, i) => (
           <div key={t.id} role="tab" aria-selected={i === pane.active} className={`pane__tab ${i === pane.active ? 'is-current' : ''}`} onMouseDown={(e) => e.button === 0 && onSelect(i)} onAuxClick={(e) => middleClick(e, i)} title={tabTitle(t, notes)}>
             {icon(t)}
@@ -73,6 +77,7 @@ export function Pane({ pane, active, notes, canSplit, onFocus, onSelect, onClose
         <button type="button" className="icon-btn pane__action" title="Split right (Ctrl+\\)" onClick={onSplit} disabled={!canSplit}>
           <Columns2 size={14} />
         </button>
+        {trailing && <span className="pane__trailing">{trailing}</span>}
       </div>
       <div className="pane__body">{children}</div>
     </section>

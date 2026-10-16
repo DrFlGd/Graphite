@@ -19,6 +19,8 @@ export function ContextPanel({ note, onOpen, onFollowLink, onShowGraph, onEdit }
   const [outgoing, setOutgoing] = useState<Outgoing[]>([])
   const [mentions, setMentions] = useState<NoteSummary[]>([])
   const [graph, setGraph] = useState<Graph>({ nodes: [], edges: [] })
+  /** Link targets that name a file in the vault (`[[mount.stl]]`), lower-cased. */
+  const [files, setFiles] = useState<Set<string>>(new Set())
 
   useEffect(() => {
     let cancelled = false
@@ -29,6 +31,13 @@ export function ContextPanel({ note, onOpen, onFollowLink, onShowGraph, onEdit }
       setOutgoing(o)
       setMentions(m)
       setGraph(g)
+      const named = o.filter((x) => !x.id && isFileName(x.target)).map((x) => fileName(x.target))
+      const found = new Set<string>()
+      for (const name of named) {
+        const hits = await api.assets(undefined, name).catch(() => [])
+        if (hits.some((a) => a.name.toLowerCase() === name.toLowerCase())) found.add(name.toLowerCase())
+      }
+      if (!cancelled) setFiles(found)
     }
     void load().catch(() => {})
     return () => {
@@ -37,6 +46,8 @@ export function ContextPanel({ note, onOpen, onFollowLink, onShowGraph, onEdit }
     // Reload when the body or title changes (after save) so links stay current.
   }, [note.id, note.updated, note.title])
 
+
+  const linkers = groupBacklinks(backlinks)
 
   return (
     <aside className="context">
@@ -54,22 +65,25 @@ export function ContextPanel({ note, onOpen, onFollowLink, onShowGraph, onEdit }
           <p className="context__empty">Links in and out will be drawn here.</p>
         )}
       </Section>
-      <Section title={`Backlinks (${backlinks.length})`}>
-        {backlinks.length === 0 && <p className="context__empty">Nothing links here yet.</p>}
-        {backlinks.map((b, i) => (
-          <button key={`${b.from.id}-${i}`} type="button" className="context__item" onClick={() => onOpen(b.from.id)}>
+      <Section title={`Backlinks (${linkers.length})`}>
+        {linkers.length === 0 && <p className="context__empty">Nothing links here yet.</p>}
+        {linkers.map((b) => (
+          <button key={b.from.id} type="button" className="context__item" onClick={() => onOpen(b.from.id)} title={b.count > 1 ? `Links here ${b.count} times` : undefined}>
             <span>{b.from.title}</span>
-            {b.relation && <span className="context__rel">{b.relation}</span>}
+            {(b.relations.length > 0 || b.count > 1) && <span className="context__rel">{[...b.relations, b.count > 1 ? `×${b.count}` : ''].filter(Boolean).join(' · ')}</span>}
           </button>
         ))}
       </Section>
       <Section title={`Links out (${outgoing.length})`}>
-        {outgoing.map((o) => (
-          <button key={o.target} type="button" className={`context__item ${o.id ? '' : 'is-missing'}`} onClick={() => (o.id ? onOpen(o.id) : onFollowLink(o.target))}>
-            <span>{o.target}</span>
-            {!o.id && <span className="context__rel">create</span>}
-          </button>
-        ))}
+        {outgoing.map((o) => {
+          const file = !o.id && files.has(fileName(o.target).toLowerCase())
+          return (
+            <button key={o.target} type="button" className={`context__item ${o.id || file ? '' : 'is-missing'}`} onClick={() => (o.id ? onOpen(o.id) : onFollowLink(o.target))} title={o.id || file ? undefined : `Create a note called “${o.target}”`}>
+              <span>{o.target}</span>
+              {file ? <span className="context__rel">file</span> : !o.id && <span className="context__rel">create</span>}
+            </button>
+          )
+        })}
       </Section>
       {mentions.length > 0 && (
         <Section title={`Unlinked mentions (${mentions.length})`}>
@@ -87,6 +101,21 @@ export function ContextPanel({ note, onOpen, onFollowLink, onShowGraph, onEdit }
   )
 }
 
+/** One row per linking note, however many times it links here. */
+function groupBacklinks(backlinks: Backlink[]): { from: NoteSummary; relations: string[]; count: number }[] {
+  const byId = new Map<string, { from: NoteSummary; relations: string[]; count: number }>()
+  for (const b of backlinks) {
+    const row = byId.get(b.from.id) ?? { from: b.from, relations: [], count: 0 }
+    row.count += 1
+    if (b.relation && !row.relations.includes(b.relation)) row.relations.push(b.relation)
+    byId.set(b.from.id, row)
+  }
+  return [...byId.values()]
+}
+
+const fileName = (target: string) => target.split('/').pop() ?? target
+/** `mount.stl`, not `Chassis v3` or `notes/a.md`. */
+const isFileName = (target: string) => /\.[a-z0-9]{1,8}$/i.test(fileName(target)) && !/\.md$/i.test(target)
 
 /** Front-matter as an editable table: type, aliases and every user property. */
 function PropertyEditor({ note, onEdit }: { note: Note; onEdit: Props['onEdit'] }) {

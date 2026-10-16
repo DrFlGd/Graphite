@@ -75,6 +75,11 @@ export function InboxView({ notes, onOpen, onImport, onChanged, onError }: Props
                   {n.title}
                 </button>
                 <p className="inbox__preview">{previews[n.id] || <em>empty</em>}</p>
+                {url && (
+                  <button type="button" className="btn inbox__import" title={`Import ${url} as a source`} onClick={() => onImport(url, n.id)}>
+                    <Download size={14} /> Import as a source
+                  </button>
+                )}
               </div>
               <div className="inbox__actions">
                 <label>
@@ -110,11 +115,6 @@ export function InboxView({ notes, onOpen, onImport, onChanged, onError }: Props
                 <button type="button" className="icon-btn" title="Move" disabled={!target.trim()} onClick={() => void act(() => api.moveNote(n.id, target.trim()))}>
                   <FolderInput size={16} />
                 </button>
-                {url && (
-                  <button type="button" className="btn inbox__import" title={`Import ${url} as a source`} onClick={() => onImport(url, n.id)}>
-                    <Download size={14} /> Import
-                  </button>
-                )}
                 <button type="button" className="icon-btn" title="Open" onClick={() => onOpen(n.id)}>
                   <ExternalLink size={16} />
                 </button>

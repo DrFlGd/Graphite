@@ -34,6 +34,8 @@ interface Props {
   onSources: () => void
 }
 
+const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
+
 export function Sidebar({ vault, notes, currentId, onOpen, onCreate, onCreateFromTemplate, onPickVault, onSearch, inboxCount, inboxOpen, graphOpen, tasksOpen, filesOpen, sourcesOpen, openTasks, sourceUpdates, sync, syncing, onSync, onSyncSettings, onInbox, onToday, onGraph, onTasks, onFiles, onSources }: Props) {
   const [filter, setFilter] = useState('')
   const [newTitle, setNewTitle] = useState('')
@@ -46,7 +48,18 @@ export function Sidebar({ vault, notes, currentId, onOpen, onCreate, onCreateFro
       const folder = n.path.includes('/') ? n.path.slice(0, n.path.lastIndexOf('/')) : ''
       byFolder.set(folder, [...(byFolder.get(folder) ?? []), n])
     }
-    return [...byFolder.entries()].sort(([a], [b]) => a.localeCompare(b))
+    // Folders and notes in name order (numbers compared as numbers), so the
+    // list does not reshuffle as notes are edited.
+    for (const items of byFolder.values()) items.sort((a, b) => collator.compare(a.title, b.title))
+    const folders = [...byFolder.keys()]
+    // Every note usually sits under one top folder (`notes/`); leave it out of the headings.
+    const top = folders.length > 0 && folders.every((f) => f !== '') ? folders[0].split('/')[0] : null
+    const shared = top !== null && folders.every((f) => f === top || f.startsWith(`${top}/`)) ? top : null
+    const label = (f: string) => {
+      const rel = shared && f.startsWith(`${shared}/`) ? f.slice(shared.length + 1) : f
+      return rel ? rel.split('/').join(' / ') : shared ?? 'Vault root'
+    }
+    return [...byFolder.entries()].sort(([a], [b]) => collator.compare(a, b)).map(([folder, items]) => ({ folder, label: label(folder), items }))
   }, [notes, filter])
 
   const submitNew = () => {
@@ -108,9 +121,11 @@ export function Sidebar({ vault, notes, currentId, onOpen, onCreate, onCreateFro
       <input className="sidebar__filter" value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter notes" aria-label="Filter notes" />
       <nav className="sidebar__list" aria-label="Notes">
         {groups.length === 0 && <p className="sidebar__empty">No notes yet.</p>}
-        {groups.map(([folder, items]) => (
+        {groups.map(({ folder, label, items }) => (
           <section key={folder || '(root)'}>
-            <h3 className="sidebar__folder">{folder || 'Vault root'}</h3>
+            <h3 className="sidebar__folder" title={folder || undefined}>
+              {label}
+            </h3>
             <ul>
               {items.map((n) => (
                 <li key={n.id}>

@@ -8,12 +8,15 @@ import { FileEmbed } from './blocks/fileEmbed'
 import { WikiLink } from './extensions/WikiLink'
 import { SlashMenu } from './extensions/SlashMenu'
 import { NoteLinkSuggest, type NoteCandidate } from './extensions/NoteLinkSuggest'
+import { DuplicateTitle } from './extensions/DuplicateTitle'
 
 export interface EditorExtensionOptions {
   placeholder?: string
   resolveSrc?: (src: string) => string
   searchNotes?: (query: string) => Promise<NoteCandidate[]>
   blockContext?: BlockContext
+  /** The title shown above the editor; a leading `# heading` repeating it is hidden. */
+  title?: () => string | undefined
   /** Skip the interactive menus (for headless parsing/serialising in tests). */
   headless?: boolean
 }
@@ -42,6 +45,7 @@ export function buildExtensions(opts: EditorExtensionOptions = {}): AnyExtension
     Placeholder.configure({ placeholder: opts.placeholder ?? "Write, or type '/' for blocks and '[[' to link a note" }),
     SlashMenu.configure({ context: opts.blockContext ?? {} }),
     NoteLinkSuggest.configure({ search: opts.searchNotes ?? (async () => []) }),
+    DuplicateTitle.configure({ title: opts.title ?? (() => undefined) }),
   ]
 }
 

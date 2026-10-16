@@ -146,12 +146,18 @@ CREATE TABLE IF NOT EXISTS sync_peers (
 );
 "#;
 
+/// Marks the start of a matched term in search snippets. Control
+/// characters, because Markdown's own brackets would be ambiguous.
+pub const SNIPPET_START: char = '\u{2}';
+/// Marks the end of a matched term in search snippets.
+pub const SNIPPET_END: char = '\u{3}';
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SearchHit {
     pub id: String,
     pub path: String,
     pub title: String,
-    /// Snippet with `[` `]` around matched terms.
+    /// Snippet with [`SNIPPET_START`] and [`SNIPPET_END`] around matched terms.
     pub snippet: String,
 }
 
@@ -578,7 +584,10 @@ impl Index {
         let Some(me) = self.summary(id)? else {
             return Ok(Vec::new());
         };
-        if me.title.trim().is_empty() {
+        // A title with no letters (a daily note's date, a number) matches
+        // every capture and log line that carries it; none of those are
+        // mentions worth linking.
+        if !me.title.chars().any(char::is_alphabetic) {
             return Ok(Vec::new());
         }
         let phrase = format!("\"{}\"", me.title.replace('"', "\"\""));
@@ -614,7 +623,7 @@ impl Index {
             .collect();
         let fts = fts.join(" ");
         let mut stmt = self.conn.prepare(
-            "SELECT n.id, n.path, n.title, snippet(notes_fts, 2, '[', ']', '…', 12)
+            "SELECT n.id, n.path, n.title, snippet(notes_fts, 2, char(2), char(3), '…', 12)
              FROM notes_fts JOIN notes n ON n.id = notes_fts.id
              WHERE notes_fts MATCH ?1
              ORDER BY bm25(notes_fts, 0.0, 5.0, 1.0, 2.0) LIMIT ?2",
@@ -971,7 +980,7 @@ impl Index {
             .collect();
         let fts = fts.join(" ");
         let mut stmt = self.conn.prepare(
-            "SELECT a.path, a.name, a.kind, snippet(assets_fts, 2, '[', ']', '…', 12)
+            "SELECT a.path, a.name, a.kind, snippet(assets_fts, 2, char(2), char(3), '…', 12)
              FROM assets_fts JOIN assets a ON a.path = assets_fts.path
              WHERE assets_fts MATCH ?1
              ORDER BY bm25(assets_fts, 0.0, 5.0, 1.0) LIMIT ?2",
@@ -1184,6 +1193,11 @@ mod tests {
         let um = idx.unlinked_mentions("A").unwrap();
         assert_eq!(um.len(), 1);
         assert_eq!(um[0].id, "C");
+
+        idx.upsert(&note("D", "Daily/2026-10-15.md", "a day"), 0, 0).unwrap();
+        idx.upsert(&note("E", "Inbox/2026-10-15 0912 pump.md", "captured 2026-10-15"), 0, 0)
+            .unwrap();
+        assert!(idx.unlinked_mentions("D").unwrap().is_empty());
     }
 
     #[test]
@@ -1204,7 +1218,7 @@ mod tests {
         let hits = idx.search("solar", 10).unwrap();
         assert_eq!(hits.len(), 2);
         assert_eq!(hits[0].id, "A");
-        assert!(hits[1].snippet.contains("[solar]"));
+        assert!(hits[1].snippet.contains("\u{2}solar\u{3}"));
         assert!(idx.search("\"unbalanced", 10).unwrap().is_empty());
     }
 

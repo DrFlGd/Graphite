@@ -807,14 +807,13 @@ impl Vault {
                 if head == hash {
                     (false, format!("Up to date at {}", &head[..7.min(head.len())]))
                 } else {
-                    (
-                        true,
-                        format!(
-                            "New commits: {} (have {})",
-                            &head[..7.min(head.len())],
-                            &hash[..7.min(hash.len())]
-                        ),
-                    )
+                    let short = |c: &str| c[..7.min(c.len())].to_string();
+                    let summary = if hash.is_empty() {
+                        format!("Upstream is at {}", short(&head))
+                    } else {
+                        format!("New commits: {} (have {})", short(&head), short(&hash))
+                    };
+                    (true, summary)
                 }
             }
             SourceKind::Page => {

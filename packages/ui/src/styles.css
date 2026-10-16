@@ -82,6 +82,8 @@
 .gr-prose li + li { margin-top: 0.2em; }
 /* List items hold a paragraph; without this each item gets a full paragraph gap and task boxes sit above their text. */
 .gr-prose li > p, .gr-prose li > div > p { margin-top: 0; margin-bottom: 0; }
+/* A first heading that repeats the note title (DuplicateTitle). */
+.gr-prose .gr-dup-title { display: none; }
 .gr-prose img { max-width: 100%; height: auto; border-radius: var(--gr-radius); display: block; }
 .gr-prose img.ProseMirror-selectednode { outline: 2px solid var(--gr-accent); }
 

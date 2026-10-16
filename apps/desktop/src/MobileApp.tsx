@@ -8,6 +8,7 @@ import { TasksView } from './components/TasksView'
 import { ProjectHub } from './components/ProjectHub'
 import { SyncDialog } from './components/SyncDialog'
 import { syncSummary } from './components/sync'
+import { snippetText } from './snippet'
 
 type Tab = 'inbox' | 'notes' | 'tasks' | 'projects'
 
@@ -290,7 +291,7 @@ export function MobileApp() {
       </div>
     )
   } else if (tab === 'notes') {
-    const rows: { id: string; title: string; sub: string }[] = hits ? hits.map((h) => ({ id: h.id, title: h.title, sub: h.snippet })) : recent.map((n) => ({ id: n.id, title: n.title, sub: n.path }))
+    const rows: { id: string; title: string; sub: string }[] = hits ? hits.map((h) => ({ id: h.id, title: h.title, sub: snippetText(h.snippet) })) : recent.map((n) => ({ id: n.id, title: n.title, sub: n.path }))
     screen = (
       <div className="mobile__screen">
         <div className="mobile__search">
