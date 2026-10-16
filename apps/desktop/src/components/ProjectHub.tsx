@@ -5,6 +5,7 @@ import { api, assetUrl, type ItemRow, type Note, type ProjectHub as Hub, type So
 import { SourceKindIcon, shortUrl } from './sources'
 import { ItemText, QueryView, type ViewKind } from './QueryView'
 import { FilesView } from './FilesView'
+import { TypeChip } from '../noteTypes'
 
 interface Props {
   noteId: string
@@ -114,7 +115,7 @@ export function ProjectHub({ noteId, version, vaultRoot, assetVersion, onOpenFil
       <header className="hub__header">
         <div className="hub__title">
           <h2>{hub.project.title}</h2>
-          <span className="hub__type">project</span>
+          <TypeChip type="project" icon />
         </div>
         <div className="hub__progress" title={`${p.done} done, ${p.doing} in progress, ${p.open} open, ${p.cancelled} cancelled`}>
           <div className="hub__bar">
@@ -227,7 +228,7 @@ export function ProjectHub({ noteId, version, vaultRoot, assetVersion, onOpenFil
             <button key={l.id} type="button" className="context__item" onClick={(e) => onOpen(l.id, e.ctrlKey || e.metaKey)} title={l.incoming ? 'Links to this project' : 'Linked from this project'}>
               <span>
                 {l.title}
-                {l.type !== 'note' && <span className="sidebar__note-type"> {l.type}</span>}
+                {l.type !== 'note' && <TypeChip type={l.type} />}
               </span>
               <span className="context__rel">{l.relation ?? (l.incoming ? '←' : '→')}</span>
             </button>

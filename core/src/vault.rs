@@ -305,6 +305,9 @@ impl Vault {
             .ok_or_else(|| Error::NoteNotFound(note.id.clone()))?;
         let mut n = note.clone();
         n.path = rel.clone();
+        if n.note_type == crate::capture::DAILY_TYPE {
+            n.title = crate::capture::dated_daily_title(&n.title, &rel);
+        }
         n.updated = Some(Utc::now());
         if n.created.is_none() {
             n.created = n.updated;

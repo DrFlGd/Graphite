@@ -750,6 +750,7 @@ export function App() {
           onOpen={(id, newTab) => openNote(id, newTab || palette.newTab)}
           onOpenFile={(path, newTab) => openAsset(path, newTab || palette.newTab)}
           onCreate={(t) => void createNote(t)}
+          typeOf={(id) => notes.find((n) => n.id === id)?.type}
           onImport={(url) => setImporting({ url })}
         />
       )}

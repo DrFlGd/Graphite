@@ -1,5 +1,6 @@
 import type { MouseEvent, ReactNode } from 'react'
-import { Columns2, Download, FileText, Inbox, ListChecks, Paperclip, Plus, Waypoints, X } from 'lucide-react'
+import { TypeIcon, typeColour } from '../noteTypes'
+import { Columns2, Download, Inbox, ListChecks, Paperclip, Plus, Waypoints, X } from 'lucide-react'
 import type { NoteSummary } from '../api'
 import type { Pane as PaneModel, Tab } from '../layout'
 
@@ -42,7 +43,7 @@ export function tabTitle(tab: Tab, notes: NoteSummary[]): string {
 
 /** A column of tabs with one body: notes, the inbox or the graph. */
 export function Pane({ pane, active, notes, canSplit, onFocus, onSelect, onClose, onNewTab, onSplit, leading, trailing, children }: Props) {
-  const icon = (t: Tab) => (t.kind === 'inbox' ? <Inbox size={13} /> : t.kind === 'graph' ? <Waypoints size={13} /> : t.kind === 'tasks' ? <ListChecks size={13} /> : t.kind === 'files' || t.kind === 'asset' ? <Paperclip size={13} /> : t.kind === 'sources' ? <Download size={13} /> : t.kind === 'note' ? <FileText size={13} /> : null)
+  const icon = (t: Tab) => (t.kind === 'inbox' ? <Inbox size={13} color={typeColour('capture')} /> : t.kind === 'graph' ? <Waypoints size={13} /> : t.kind === 'tasks' ? <ListChecks size={13} color={typeColour('task')} /> : t.kind === 'files' || t.kind === 'asset' ? <Paperclip size={13} /> : t.kind === 'sources' ? <Download size={13} color={typeColour('source')} /> : t.kind === 'note' ? <TypeIcon type={notes.find((n) => n.id === t.noteId)?.type} size={13} /> : null)
   const middleClick = (e: MouseEvent, ti: number) => {
     if (e.button === 1) {
       e.preventDefault()

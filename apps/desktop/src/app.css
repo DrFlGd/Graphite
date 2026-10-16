@@ -64,6 +64,10 @@ kbd { font-family: var(--gr-mono); font-size: 0.85em; background: var(--gr-bg-su
 .sidebar__note.is-current { background: var(--gr-accent-bg); color: var(--gr-accent); }
 .sidebar__note-title { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .sidebar__note-type { font-size: 11px; color: var(--gr-fg-muted); background: var(--gr-bg-subtle); padding: 0 6px; border-radius: 999px; }
+/* Note types: a tinted label in the type's colour (see noteTypes.tsx); mixing towards the text colour keeps it readable in both themes. */
+.type-chip { display: inline-flex; align-items: center; gap: 4px; flex: none; font-size: 11px; line-height: 1.5; padding: 0 7px; border-radius: 999px; white-space: nowrap; color: color-mix(in srgb, var(--t) 70%, var(--gr-fg)); background: color-mix(in srgb, var(--t) 16%, transparent); }
+.type-chip--plain { color: var(--gr-fg-muted); background: var(--gr-bg-subtle); }
+.type-icon { flex: none; }
 .sidebar__empty { color: var(--gr-fg-muted); padding: 8px; }
 .sidebar__footer { padding: 6px 12px; font-size: 12px; color: var(--gr-fg-muted); border-top: 1px solid var(--gr-border); display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .sidebar__sync { display: inline-flex; align-items: center; gap: 4px; font: inherit; color: inherit; background: none; border: 0; padding: 2px 4px; border-radius: 4px; cursor: pointer; }
@@ -72,8 +76,24 @@ kbd { font-family: var(--gr-mono); font-size: 0.85em; background: var(--gr-bg-su
 .sidebar__sync:disabled { cursor: default; opacity: 0.7; }
 
 /* Note pane */
-.note { display: flex; flex-direction: column; height: 100%; min-height: 0; }
-.note__header { padding: 18px 28px 0; }
+/* The note as a page: a centred sheet with visible edges, so the margins read as margins.
+   --measure is the text width; the title, tags and toolbar line up with it. */
+.note {
+  display: flex; flex-direction: column; height: 100%; min-height: 0;
+  --measure: 680px;
+  --page: min(100%, calc(var(--measure) + 112px));
+  --page-l: calc(50% - var(--page) / 2);
+  --page-r: calc(50% + var(--page) / 2);
+  background: linear-gradient(to right,
+    var(--gr-bg-subtle) var(--page-l), var(--gr-border) var(--page-l) calc(var(--page-l) + 1px),
+    var(--gr-bg) calc(var(--page-l) + 1px) calc(var(--page-r) - 1px),
+    var(--gr-border) calc(var(--page-r) - 1px) var(--page-r), var(--gr-bg-subtle) var(--page-r));
+}
+.note__header, .note__tags, .note .gr-toolbar { width: 100%; max-width: calc(var(--measure) + 56px); margin-inline: auto; box-sizing: border-box; }
+.note .gr-toolbar { background: transparent; }
+.note .source-bar { width: calc(100% - 56px); max-width: var(--measure); margin-inline: auto; box-sizing: border-box; }
+.note .gr-prose { max-width: var(--measure); }
+.note__header { padding: 22px 28px 0; }
 .note__title { width: 100%; border: 0; background: transparent; font: inherit; font-size: 26px; font-weight: 700; line-height: 1.25; padding: 0; outline: none; resize: none; overflow: hidden; display: block; color: inherit; }
 .note__body { display: flex; flex: 1; min-height: 0; }
 .note__body > :first-child { flex: 1; min-width: 0; }
@@ -103,7 +123,7 @@ kbd { font-family: var(--gr-mono); font-size: 0.85em; background: var(--gr-bg-su
 .note__tag-input { border: 0; background: transparent; outline: none; min-width: 80px; font-size: 12px; }
 .note .gr-editor { flex: 1; min-height: 0; }
 .note__raw { flex: 1; display: flex; flex-direction: column; min-height: 0; }
-.note__raw-text { flex: 1; resize: none; border: 0; outline: none; padding: 16px 28px; font-family: var(--gr-mono); font-size: 13px; line-height: 1.55; background: var(--gr-bg); }
+.note__raw-text { flex: 1; resize: none; border: 0; outline: none; padding: 16px max(28px, calc((100% - var(--measure)) / 2)); font-family: var(--gr-mono); font-size: 13px; line-height: 1.55; background: transparent; }
 
 /* Context panel */
 .context { border-left: 1px solid var(--gr-border); background: var(--gr-bg-elev); overflow: auto; padding: 12px; }
@@ -112,6 +132,8 @@ kbd { font-family: var(--gr-mono); font-size: 0.85em; background: var(--gr-bg-su
 .context__item { display: flex; justify-content: space-between; gap: 8px; width: 100%; text-align: left; border: 0; background: transparent; padding: 5px 8px; border-radius: var(--gr-radius); cursor: pointer; }
 .context__item:hover { background: var(--gr-bg-subtle); }
 .context__item.is-missing { color: var(--gr-fg-muted); }
+.context__item .type-icon { align-self: center; }
+.context__item .type-icon + span { flex: 1; min-width: 0; }
 .context__rel { font-size: 11px; color: var(--gr-fg-muted); font-family: var(--gr-mono); }
 .context__empty { color: var(--gr-fg-muted); font-size: 12px; margin: 0; padding: 0 8px; }
 .context__props { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 4px 10px; margin: 0; font-size: 12px; }
@@ -286,7 +308,6 @@ kbd { font-family: var(--gr-mono); font-size: 0.85em; background: var(--gr-bg-su
 .hub__header { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
 .hub__title { display: flex; align-items: baseline; gap: 10px; }
 .hub__title h2 { margin: 0; font-size: 24px; }
-.hub__type { font-size: 11px; color: var(--gr-fg-muted); background: var(--gr-bg-subtle); padding: 1px 8px; border-radius: 999px; }
 .hub__progress { flex: 1; min-width: 220px; display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--gr-fg-muted); }
 .hub__bar { flex: 0 0 160px; height: 8px; border-radius: 999px; background: var(--gr-bg-subtle); overflow: hidden; }
 .hub__bar-fill { height: 100%; background: var(--gr-accent); border-radius: 999px; transition: width 0.3s; }
@@ -471,7 +492,7 @@ kbd { font-family: var(--gr-mono); font-size: 0.85em; background: var(--gr-bg-su
 .mobile__list { list-style: none; margin: 0; padding: 8px 6px; }
 .mobile__list li button { display: flex; flex-direction: column; width: 100%; text-align: left; border: 0; background: transparent; padding: 12px 10px; border-radius: 8px; color: var(--gr-fg); gap: 2px; }
 .mobile__list li button:active { background: var(--gr-accent-bg); }
-.mobile__row-title { font-size: 16px; font-weight: 550; }
+.mobile__row-title { font-size: 16px; font-weight: 550; display: inline-flex; align-items: center; gap: 6px; }
 .mobile__row-sub { font-size: 13px; color: var(--gr-fg-muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; max-width: 100%; }
 .mobile__none { padding: 24px 14px; color: var(--gr-fg-muted); font-size: 14px; }
 .mobile__tabs { display: flex; border-top: 1px solid var(--gr-border); background: var(--gr-bg-elev); padding-bottom: env(safe-area-inset-bottom); }

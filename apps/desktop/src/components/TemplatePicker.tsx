@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, type Template } from '../api'
+import { TypeChip } from '../noteTypes'
 
 interface Props {
   /** `create` asks for a title; `promote` turns the named note into a project. */
@@ -80,7 +81,7 @@ export function TemplatePicker({ mode, blank, onClose, onDone, onError }: Props)
                 <button type="button" role="option" aria-selected={t.name === selected} className={`picker__item ${t.name === selected ? 'is-selected' : ''}`} onClick={() => setSelected(t.name)} onDoubleClick={() => void go()}>
                   <span className="picker__name">
                     {t.name}
-                    <span className="sidebar__note-type">{t.note_type}</span>
+                    <TypeChip type={t.note_type} icon />
                     {!t.builtin && <span className="sidebar__note-type">vault</span>}
                   </span>
                   <span className="picker__desc">{t.description}</span>
