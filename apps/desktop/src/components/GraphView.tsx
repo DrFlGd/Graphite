@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Globe, Locate } from 'lucide-react'
 import { api, type Graph, type GraphNode, type NoteSummary } from '../api'
-import { GraphCanvas } from './GraphCanvas'
+import { GraphCanvas, TYPE_COLOURS } from './GraphCanvas'
 
 export type GraphMode = 'global' | 'local'
 
@@ -18,19 +18,17 @@ interface Props {
   onError: (e: string) => void
 }
 
-const LEGEND: [string, string][] = [
-  ['project', '#3b6ef5'],
-  ['idea', '#e0a100'],
-  ['area', '#2e9e5b'],
-  ['source', '#8a5cf6'],
-  ['daily', '#1aa3a3'],
-  ['capture', '#9a9ca4'],
-]
 
 /** Full-size graph: the whole vault, or the neighbourhood of the open note. */
 export function GraphView({ current, mode, onModeChange, version, onOpen, onCreate, onError }: Props) {
   const [graph, setGraph] = useState<Graph>({ nodes: [], edges: [] })
   const [hops, setHops] = useState(1)
+  // The note types actually in view, in a stable order.
+  const legend = useMemo(() => {
+    const present = new Set(graph.nodes.filter((n) => !n.missing).map((n) => n.type))
+    const known = Object.entries(TYPE_COLOURS).filter(([t]) => present.has(t))
+    return present.has('note') ? [...known, ['note', 'var(--gr-fg-muted)'] as [string, string]] : known
+  }, [graph])
   const [filter, setFilter] = useState('')
   const local = mode === 'local' && current !== null
 
@@ -80,9 +78,9 @@ export function GraphView({ current, mode, onModeChange, version, onOpen, onCrea
           {graph.nodes.length} notes · {graph.edges.length} links
         </span>
       </div>
-      <GraphCanvas graph={graph} focusId={current?.id ?? null} filter={filter} onOpen={open} className="graph__canvas" />
+      <GraphCanvas graph={graph} focusId={current?.id ?? null} filter={filter} onOpen={open} insetBottom={48} className="graph__canvas" />
       <ul className="graph__legend" aria-label="Legend">
-        {LEGEND.map(([t, c]) => (
+        {legend.map(([t, c]) => (
           <li key={t}>
             <span className="graph__dot" style={{ background: c }} /> {t}
           </li>
