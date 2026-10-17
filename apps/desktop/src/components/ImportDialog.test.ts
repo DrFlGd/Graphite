@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type { Tools } from '../api'
-import { missingToolFor } from './ImportDialog'
+import { missingToolFor, videoToolsNote } from './ImportDialog'
 
-const tools = (over: Partial<Tools>): Tools => ({ ffmpeg: false, ffprobe: false, pdfinfo: false, pdftotext: false, pdftoppm: false, git: false, yt_dlp: false, browser: false, ...over })
+const tools = (over: Partial<Tools>): Tools => ({ ffmpeg: false, ffprobe: false, pdfinfo: false, pdftotext: false, pdftoppm: false, git: false, yt_dlp: false, deno: false, browser: false, ...over })
 
 describe('missingToolFor', () => {
   it('lets GitHub repositories through without git', () => {
@@ -15,5 +15,10 @@ describe('missingToolFor', () => {
     expect(missingToolFor('video', 'https://youtu.be/x', tools({}))).toBe('yt-dlp')
     expect(missingToolFor('video', 'https://youtu.be/x', tools({ yt_dlp: true }))).toBeNull()
     expect(missingToolFor('page', 'https://example.com', tools({}))).toBeNull()
+  })
+  it('says what the video tools button downloads', () => {
+    expect(videoToolsNote(['yt-dlp', 'deno', 'ffmpeg'])).toBe('Gets yt-dlp, Deno and ffmpeg from their official releases, about 285 MB.')
+    expect(videoToolsNote(['deno'])).toBe('Gets Deno from its official releases, about 45 MB.')
+    expect(videoToolsNote([])).toMatch(/newest yt-dlp/)
   })
 })

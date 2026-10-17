@@ -14,7 +14,7 @@
 //!   downloaded, screenshot when a Chromium-family browser is on the PATH.
 //! - **Video** (YouTube, Vimeo and everything else yt-dlp knows): the video
 //!   file, thumbnail, description and chapter list. Needs `yt-dlp`, which
-//!   `install_yt_dlp` can download.
+//!   `install_video_tools` can download (with Deno and ffmpeg).
 //! - **PDF and direct files**: downloaded into the vault as assets.
 
 use std::fs;
@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
-use crate::assets::{command, find_tool, is_asset_ext, refresh_tools, tools, tools_dir};
+use crate::assets::{command, find_tool, is_asset_ext, refresh_tools, tools, tools_dir, Tools};
 use crate::attachments::safe_attachment_name;
 use crate::error::{Error, Result};
 use crate::note::{Note, NoteSummary};
@@ -557,7 +557,12 @@ fn unzip_without_top_folder(zip: &Path, dest: &Path) -> Result<()> {
     Ok(())
 }
 
-// ----- yt-dlp -----
+// ----- video tools -----
+//
+// Video import runs yt-dlp. On YouTube yt-dlp also needs a JavaScript
+// runtime (Deno) to see most formats, and ffmpeg to join the separate
+// picture and sound streams of anything above 360p. `install_video_tools`
+// fetches whichever of the three is missing into `tools_dir()`.
 
 /// yt-dlp's standalone build for this platform, as named in its releases.
 fn yt_dlp_asset() -> Option<&'static str> {
@@ -571,46 +576,347 @@ fn yt_dlp_asset() -> Option<&'static str> {
     }
 }
 
-/// Download yt-dlp from its GitHub releases into `tools_dir()`, checking it
-/// against the published SHA-256 sums. Returns where it was put.
-pub fn install_yt_dlp() -> Result<PathBuf> {
-    let asset = yt_dlp_asset().ok_or_else(|| other("Video import works in the desktop app, not on this device."))?;
-    let base = std::env::var("GRAPHITE_YT_DLP_URL")
-        .unwrap_or_else(|_| "https://github.com/yt-dlp/yt-dlp/releases/latest/download".to_string());
-    let base = base.trim_end_matches('/');
-    let dir = tools_dir().ok_or_else(|| other("no folder for downloaded tools on this system"))?;
-    fs::create_dir_all(&dir)?;
-    let file = if cfg!(windows) { "yt-dlp.exe" } else { "yt-dlp" };
-    let part = dir.join(format!("{file}.part"));
+/// Deno's release archive for this platform.
+fn deno_asset() -> Option<&'static str> {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("windows", "aarch64") => Some("deno-aarch64-pc-windows-msvc.zip"),
+        ("windows", _) => Some("deno-x86_64-pc-windows-msvc.zip"),
+        ("linux", "x86_64") => Some("deno-x86_64-unknown-linux-gnu.zip"),
+        ("linux", "aarch64") => Some("deno-aarch64-unknown-linux-gnu.zip"),
+        ("macos", "aarch64") => Some("deno-aarch64-apple-darwin.zip"),
+        ("macos", _) => Some("deno-x86_64-apple-darwin.zip"),
+        _ => None,
+    }
+}
+
+/// yt-dlp's ffmpeg build for this platform. Only Windows: elsewhere the
+/// builds are .tar.xz, and the system's package manager has ffmpeg anyway.
+fn ffmpeg_asset() -> Option<&'static str> {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("windows", "aarch64") => Some("ffmpeg-master-latest-winarm64-gpl.zip"),
+        ("windows", _) => Some("ffmpeg-master-latest-win64-gpl.zip"),
+        _ => None,
+    }
+}
+
+fn exe(name: &str) -> String {
+    if cfg!(windows) {
+        format!("{name}.exe")
+    } else {
+        name.to_string()
+    }
+}
+
+fn release_url(env: &str, default: &str) -> String {
+    std::env::var(env)
+        .unwrap_or_else(|_| default.to_string())
+        .trim_end_matches('/')
+        .to_string()
+}
+
+/// The SHA-256 a checksum file gives for `asset`: the hash on the line naming
+/// it, or the only hash in the file (Deno publishes one file per archive).
+fn checksum_for(sums: &str, asset: &str) -> Option<String> {
+    let is_hash = |t: &str| t.len() == 64 && t.chars().all(|c| c.is_ascii_hexdigit());
+    let hashes = |l: &str| {
+        l.split(|c: char| c.is_whitespace() || c == ':' || c == '*')
+            .filter(|t| is_hash(t))
+            .map(|t| t.to_ascii_lowercase())
+            .collect::<Vec<_>>()
+    };
+    let named = sums
+        .lines()
+        .filter(|l| {
+            l.split(|c: char| c.is_whitespace() || c == '*' || c == '/' || c == '\\')
+                .any(|t| t == asset)
+        })
+        .find_map(|l| hashes(l).into_iter().next());
+    named.or_else(|| {
+        let all = hashes(sums);
+        (all.len() == 1).then(|| all[0].clone())
+    })
+}
+
+/// Download `base/asset` to `dest`, checked against the hash `sums_url` gives.
+fn fetch_checked(base: &str, asset: &str, sums_url: &str, dest: &Path) -> Result<()> {
     let checked = (|| -> Result<()> {
-        let (sums, _) = fetch_text(&format!("{base}/SHA2-256SUMS"))?;
-        let want = sums
-            .lines()
-            .find_map(|l| {
-                let (hash, name) = l.trim().split_once(char::is_whitespace)?;
-                (name.trim().trim_start_matches('*') == asset).then(|| hash.to_ascii_lowercase())
-            })
-            .ok_or_else(|| other(format!("yt-dlp's checksums do not list {asset}")))?;
-        let (got, _) = fetch_to_file(&format!("{base}/{asset}"), &part)?;
+        let (sums, _) = fetch_text(sums_url)?;
+        let want =
+            checksum_for(&sums, asset).ok_or_else(|| other(format!("the published checksums do not list {asset}")))?;
+        let (got, _) = fetch_to_file(&format!("{base}/{asset}"), dest)?;
         if got != want {
-            return Err(other("the yt-dlp download did not match its published checksum"));
+            return Err(other(format!(
+                "the {asset} download did not match its published checksum"
+            )));
         }
         Ok(())
     })();
-    if let Err(e) = checked {
-        let _ = fs::remove_file(&part);
-        return Err(e);
+    if checked.is_err() {
+        let _ = fs::remove_file(dest);
     }
+    checked
+}
+
+/// Copy the zip entries whose file name is one of `names` into `dir`.
+fn unzip_programs(zip: &Path, names: &[String], dir: &Path) -> Result<()> {
+    let mut archive =
+        zip::ZipArchive::new(fs::File::open(zip)?).map_err(|e| other(format!("not a zip archive: {e}")))?;
+    let mut found = 0;
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i).map_err(|e| other(format!("zip archive: {e}")))?;
+        let Some(path) = entry.enclosed_name() else { continue };
+        let Some(name) = path.file_name().map(|n| n.to_string_lossy().into_owned()) else {
+            continue;
+        };
+        if entry.is_dir() || !names.contains(&name) {
+            continue;
+        }
+        let part = dir.join(format!("{name}.part"));
+        std::io::copy(&mut entry, &mut fs::File::create(&part)?)?;
+        install_program(&part, &dir.join(&name))?;
+        found += 1;
+    }
+    if found < names.len() {
+        return Err(other(format!("the archive does not hold {}", names.join(" and "))));
+    }
+    Ok(())
+}
+
+/// Make a downloaded program executable and move it into place.
+fn install_program(part: &Path, dest: &Path) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&part, fs::Permissions::from_mode(0o755))?;
+        fs::set_permissions(part, fs::Permissions::from_mode(0o755))?;
     }
-    let dest = dir.join(file);
-    let _ = fs::remove_file(&dest);
-    fs::rename(&part, &dest)?;
+    let _ = fs::remove_file(dest);
+    fs::rename(part, dest)?;
+    Ok(())
+}
+
+fn own_tools_dir() -> Result<PathBuf> {
+    let dir = tools_dir().ok_or_else(|| other("no folder for downloaded tools on this system"))?;
+    fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
+
+/// Download the newest yt-dlp from its GitHub releases into `tools_dir()`.
+pub fn install_yt_dlp() -> Result<PathBuf> {
+    let asset = yt_dlp_asset().ok_or_else(|| other("Video import works in the desktop app, not on this device."))?;
+    let base = release_url(
+        "GRAPHITE_YT_DLP_URL",
+        "https://github.com/yt-dlp/yt-dlp/releases/latest/download",
+    );
+    let dir = own_tools_dir()?;
+    let dest = dir.join(exe("yt-dlp"));
+    let part = dir.join(format!("{}.part", exe("yt-dlp")));
+    fetch_checked(&base, asset, &format!("{base}/SHA2-256SUMS"), &part)?;
+    install_program(&part, &dest)?;
     refresh_tools();
     Ok(dest)
+}
+
+/// Download Deno, which yt-dlp needs to read YouTube's player code.
+pub fn install_deno() -> Result<PathBuf> {
+    let asset = deno_asset().ok_or_else(|| other("Deno has no build for this device"))?;
+    let base = release_url(
+        "GRAPHITE_DENO_URL",
+        "https://github.com/denoland/deno/releases/latest/download",
+    );
+    let dir = own_tools_dir()?;
+    let zip = dir.join("deno.zip.part");
+    fetch_checked(&base, asset, &format!("{base}/{asset}.sha256sum"), &zip)?;
+    let unpacked = unzip_programs(&zip, &[exe("deno")], &dir);
+    let _ = fs::remove_file(&zip);
+    unpacked?;
+    refresh_tools();
+    Ok(dir.join(exe("deno")))
+}
+
+/// Download ffmpeg and ffprobe (Windows only; see `ffmpeg_asset`).
+pub fn install_ffmpeg() -> Result<PathBuf> {
+    let asset = ffmpeg_asset().ok_or_else(|| other("Install ffmpeg with your system's package manager."))?;
+    let base = release_url(
+        "GRAPHITE_FFMPEG_URL",
+        "https://github.com/yt-dlp/FFmpeg-Builds/releases/latest/download",
+    );
+    let dir = own_tools_dir()?;
+    let zip = dir.join("ffmpeg.zip.part");
+    fetch_checked(&base, asset, &format!("{base}/checksums.sha256"), &zip)?;
+    let unpacked = unzip_programs(&zip, &[exe("ffmpeg"), exe("ffprobe")], &dir);
+    let _ = fs::remove_file(&zip);
+    unpacked?;
+    refresh_tools();
+    Ok(dir.join(exe("ffmpeg")))
+}
+
+/// What video import still lacks that `install_video_tools` can fetch here.
+pub fn missing_video_tools() -> Vec<&'static str> {
+    let t = tools();
+    let mut out = Vec::new();
+    if !t.yt_dlp && yt_dlp_asset().is_some() {
+        out.push("yt-dlp");
+    }
+    if !t.deno && deno_asset().is_some() {
+        out.push("deno");
+    }
+    if !(t.ffmpeg && t.ffprobe) && ffmpeg_asset().is_some() {
+        out.push("ffmpeg");
+    }
+    out
+}
+
+/// Fetch the newest yt-dlp (YouTube changes often, and a fresh yt-dlp is the
+/// usual fix) plus Deno and ffmpeg where they are missing.
+pub fn install_video_tools() -> Result<Tools> {
+    let missing = missing_video_tools();
+    let ours = tools_dir().map(|d| d.join(exe("yt-dlp"))).is_some_and(|p| p.is_file());
+    if missing.contains(&"yt-dlp") || ours {
+        install_yt_dlp()?;
+    }
+    if missing.contains(&"deno") {
+        install_deno()?;
+    }
+    if missing.contains(&"ffmpeg") {
+        install_ffmpeg()?;
+    }
+    Ok(refresh_tools())
+}
+
+/// Arguments every yt-dlp call gets: the JavaScript runtime and ffmpeg it
+/// should use, which may sit in `tools_dir()` rather than on the PATH.
+fn yt_dlp_args() -> Vec<String> {
+    let mut args = vec!["--no-playlist".to_string(), "--no-warnings".to_string()];
+    if let Some(deno) = find_tool("deno") {
+        args.push("--js-runtimes".into());
+        args.push(format!("deno:{}", plain_path(&deno)));
+    } else if let Some(node) = find_tool("node") {
+        args.push("--js-runtimes".into());
+        args.push(format!("node:{}", plain_path(&node)));
+    }
+    if let Some(ffmpeg) = find_tool("ffmpeg") {
+        args.push("--ffmpeg-location".into());
+        args.push(plain_path(&ffmpeg));
+    }
+    args
+}
+
+fn run_yt_dlp(extra: &[&str]) -> std::result::Result<String, String> {
+    let base = yt_dlp_args();
+    let args: Vec<&str> = base.iter().map(String::as_str).chain(extra.iter().copied()).collect();
+    run("yt-dlp", &args, None).map_err(|e| {
+        // "yt-dlp --no-playlist: ERROR: [youtube] …" → "yt-dlp: [youtube] …"
+        let msg = e.split_once(": ").map_or(e.as_str(), |(_, m)| m);
+        format!("yt-dlp: {}", msg.trim_start_matches("ERROR: "))
+    })
+}
+
+/// Everything yt-dlp knows about a video, without downloading it.
+fn video_info(url: &str) -> Result<Value> {
+    let out = run_yt_dlp(&["--dump-single-json", url]).map_err(other)?;
+    serde_json::from_str(&out).map_err(|e| other(format!("yt-dlp output: {e}")))
+}
+
+/// One stream from yt-dlp's format list.
+#[derive(Debug)]
+struct Stream {
+    id: String,
+    video: bool,
+    audio: bool,
+    height: u64,
+    ext: String,
+    rate: u64,
+}
+
+fn streams(info: &Value) -> Vec<Stream> {
+    let Some(formats) = info["formats"].as_array() else {
+        return Vec::new();
+    };
+    formats
+        .iter()
+        .filter_map(|f| {
+            let id = f["format_id"].as_str()?.to_string();
+            let codec = |k: &str| f[k].as_str().map(|c| c != "none");
+            let height = f["height"].as_u64().unwrap_or(0);
+            // A missing codec field means "unknown", which for a plain file
+            // (a Vimeo progressive download) is usually both.
+            let video = codec("vcodec").unwrap_or(height > 0 || f["acodec"].is_null());
+            let audio = codec("acodec").unwrap_or(f["vcodec"].is_null());
+            let picture = f["ext"].as_str() != Some("mhtml"); // storyboards
+            (picture && (video || audio)).then(|| Stream {
+                id,
+                video,
+                audio,
+                height,
+                ext: f["ext"].as_str().unwrap_or("").to_string(),
+                rate: f["tbr"].as_f64().unwrap_or(0.0).max(0.0) as u64,
+            })
+        })
+        .collect()
+}
+
+/// What `choose_format` can tell about a format list.
+#[derive(Debug, PartialEq)]
+enum FormatChoice {
+    /// A yt-dlp `-f` value.
+    Use(String),
+    /// Picture and sound only come separately, and ffmpeg is missing.
+    NeedsFfmpeg,
+    /// Nothing downloadable was offered.
+    Nothing,
+}
+
+/// Pick what to download from the formats the site actually offers: the
+/// best picture up to 1080p (MP4 preferred) with sound, joined from separate
+/// streams when ffmpeg can do that.
+fn choose_format(info: &Value, can_merge: bool) -> FormatChoice {
+    let all = streams(info);
+    if all.is_empty() {
+        // Some sites give a single direct URL and no format list.
+        return if info["url"].is_string() {
+            FormatChoice::Use("b".into())
+        } else {
+            FormatChoice::Nothing
+        };
+    }
+    let picture_rank = |s: &Stream| {
+        let fits = s.height <= 1080;
+        (
+            fits,
+            if fits { s.height } else { u64::MAX - s.height },
+            s.ext == "mp4",
+            s.rate,
+        )
+    };
+    let sound_rank = |s: &Stream| (s.ext == "m4a", s.rate);
+    let muxed = all
+        .iter()
+        .filter(|s| s.video && s.audio)
+        .max_by_key(|s| picture_rank(s));
+    let picture = all
+        .iter()
+        .filter(|s| s.video && !s.audio)
+        .max_by_key(|s| picture_rank(s));
+    let sound = all.iter().filter(|s| s.audio && !s.video).max_by_key(|s| sound_rank(s));
+    match (muxed, picture, sound) {
+        (m, Some(p), Some(a)) if can_merge && m.is_none_or(|m| picture_rank(p) > picture_rank(m)) => {
+            FormatChoice::Use(format!("{}+{}", p.id, a.id))
+        }
+        (Some(m), _, _) => FormatChoice::Use(m.id.clone()),
+        (None, Some(_), Some(_)) => FormatChoice::NeedsFfmpeg,
+        (None, Some(p), None) => FormatChoice::Use(p.id.clone()),
+        (None, None, Some(a)) => FormatChoice::Use(a.id.clone()),
+        (None, None, None) => FormatChoice::Nothing,
+    }
+}
+
+/// Why a video has nothing to download, and what fixes it.
+fn no_formats_error() -> Error {
+    if find_tool("deno").is_none() && deno_asset().is_some() {
+        other("The site offered no video yt-dlp could download. On YouTube this usually means Deno is missing: use Download video tools in the import window.")
+    } else {
+        other("The site offered no video yt-dlp could download. Use Download video tools in the import window to get the newest yt-dlp, then try again.")
+    }
 }
 
 // ----- web pages -----
@@ -948,17 +1254,17 @@ fn md_escape_title(t: &str) -> String {
 // with the vault (`begin_*`), the network work with none (`fetch` /
 // `probe`), and another short step with the vault (`finish_*`).
 
-/// An import whose note and folder exist but whose content is not fetched yet.
+/// An import whose folder exists but whose content is not fetched yet.
 pub struct PendingImport {
     url: String,
     kind: SourceKind,
     opts: ImportOptions,
-    note_id: String,
+    /// The source note being refreshed; `None` for a first import, whose
+    /// note is only created once the fetch succeeded.
+    note_id: Option<String>,
     title: String,
     folder: String,
     dir: PathBuf,
-    /// A first import (not a re-import): undone if it fails.
-    fresh: bool,
     fetched: Option<Fetched>,
 }
 
@@ -1052,26 +1358,34 @@ impl PendingImport {
             SourceKind::Video => {
                 if !tools().yt_dlp {
                     return Err(other(if yt_dlp_asset().is_some() {
-                        "yt-dlp is needed to import videos. Use Download yt-dlp in the import window, or install it yourself."
+                        "yt-dlp is needed to import videos. Use Download video tools in the import window, or install it yourself."
                     } else {
                         "Video import works in the desktop app, not on this device."
                     }));
                 }
+                // Ask what the site offers first, then download one of those,
+                // instead of a format pattern the site may not match.
+                let info = video_info(url)?;
+                let format = match choose_format(&info, tools().ffmpeg) {
+                    FormatChoice::Use(f) => f,
+                    FormatChoice::NeedsFfmpeg => {
+                        return Err(other(if ffmpeg_asset().is_some() {
+                            "This video only comes as separate picture and sound, which ffmpeg has to join. Use Download video tools in the import window."
+                        } else {
+                            "This video only comes as separate picture and sound, which ffmpeg has to join. Install ffmpeg, then try again."
+                        }))
+                    }
+                    FormatChoice::Nothing => return Err(no_formats_error()),
+                };
+                let probe = dir.join("probe.json");
+                fs::write(&probe, serde_json::to_vec(&info).map_err(|e| other(e.to_string()))?)?;
+                let probe_arg = plain_path(&probe);
                 let template = dir.join("%(title).120B [%(id)s].%(ext)s");
                 let template = template.to_string_lossy().into_owned();
-                // Separate video and audio streams need ffmpeg to be merged;
-                // without it, take the best single file.
-                let format = if tools().ffmpeg {
-                    "bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b"
-                } else {
-                    "b[ext=mp4]/b"
-                };
                 let mut args = vec![
-                    "--no-playlist",
-                    "--no-warnings",
                     "--no-overwrites",
                     "-f",
-                    format,
+                    &format,
                     "--write-thumbnail",
                     "--write-info-json",
                     "--restrict-filenames",
@@ -1081,8 +1395,10 @@ impl PendingImport {
                 if tools().ffmpeg {
                     args.extend(["--merge-output-format", "mp4", "--convert-thumbnails", "jpg"]);
                 }
-                args.push(url);
-                run("yt-dlp", &args, None).map_err(other)?;
+                args.extend(["--load-info-json", &probe_arg]);
+                let ran = run_yt_dlp(&args);
+                let _ = fs::remove_file(&probe);
+                ran.map_err(other)?;
                 // Find what it wrote.
                 let mut info_path = None;
                 let mut video_path = None;
@@ -1214,14 +1530,7 @@ impl PendingCheck {
                 if !tools().yt_dlp {
                     return Err(other("yt-dlp is not installed"));
                 }
-                let out = run(
-                    "yt-dlp",
-                    &["--dump-single-json", "--no-playlist", "--no-warnings", url],
-                    None,
-                )
-                .map_err(other)?;
-                let info: Value = serde_json::from_str(&out).map_err(|e| other(format!("yt-dlp output: {e}")))?;
-                let v = parse_video_info(&info);
+                let v = parse_video_info(&video_info(url)?);
                 if !self.video_file_ok {
                     (true, "Video file is missing from the vault".into())
                 } else if v.id != hash && !hash.is_empty() {
@@ -1268,12 +1577,18 @@ impl Vault {
             return Err(other(format!("not a URL: {url}")));
         }
         let kind = opts.kind.unwrap_or_else(|| classify_url(url));
-        let note = self.new_source_note(url, kind, opts)?;
-        let id = note.id.clone();
-        self.pending_import(note, url, kind, opts.clone(), true)
-            .inspect_err(|_| {
-                let _ = self.delete(&id);
-            })
+        let title = unique_title(self, &source_title(url, kind, opts));
+        let (folder, dir) = self.new_source_folder(&title)?;
+        Ok(PendingImport {
+            url: url.to_string(),
+            kind,
+            opts: opts.clone(),
+            note_id: None,
+            title,
+            folder,
+            dir,
+            fetched: None,
+        })
     }
 
     /// First step of `reimport_source`.
@@ -1291,43 +1606,50 @@ impl Vault {
             project: None,
             title: Some(note.title.clone()),
         };
-        self.pending_import(note, &url, kind, opts, false)
-    }
-
-    fn pending_import(
-        &mut self,
-        mut note: Note,
-        url: &str,
-        kind: SourceKind,
-        opts: ImportOptions,
-        fresh: bool,
-    ) -> Result<PendingImport> {
-        let had_folder = prop_str(&note, "folder").is_some();
-        let (folder, dir) = self.source_folder(&mut note)?;
-        if fresh || !had_folder {
-            note = self.write(&note)?;
-        }
+        let (folder, dir) = match prop_str(&note, "folder") {
+            Some(rel) => {
+                let abs = self.safe_join(&rel)?;
+                fs::create_dir_all(&abs)?;
+                (rel, abs)
+            }
+            None => {
+                let (rel, abs) = self.new_source_folder(&note.title)?;
+                let mut note = note.clone();
+                note.properties.insert("folder".into(), json!(rel));
+                self.write(&note)?;
+                (rel, abs)
+            }
+        };
         Ok(PendingImport {
-            url: url.to_string(),
+            url,
             kind,
             opts,
-            note_id: note.id,
+            note_id: Some(note.id),
             title: note.title,
             folder,
             dir,
-            fresh,
             fetched: None,
         })
     }
 
-    /// Last step: write what `fetch` brought back into the note. When the
-    /// fetch failed, a first import leaves nothing behind.
-    pub fn finish_import(&mut self, job: PendingImport, fetched: Result<()>) -> Result<ImportReport> {
-        let (id, folder, fresh) = (job.note_id.clone(), job.folder.clone(), job.fresh);
-        let result = fetched.and_then(|()| self.write_import(job));
+    /// Last step: write what `fetch` brought back into the note, creating
+    /// it on a first import. A failed first import leaves nothing behind.
+    pub fn finish_import(&mut self, mut job: PendingImport, fetched: Result<()>) -> Result<ImportReport> {
+        let fresh = job.note_id.is_none();
+        let folder = job.folder.clone();
+        let mut created = None;
+        let result = fetched.and_then(|()| {
+            if fresh {
+                let note = self.new_source_note(&job)?;
+                created = Some(note.id.clone());
+                job.note_id = Some(note.id);
+            }
+            self.write_import(job)
+        });
         if result.is_err() && fresh {
-            // Leave no half-made record behind: the note and the folder made for it.
-            let _ = self.delete(&id);
+            if let Some(id) = created {
+                let _ = self.delete(&id);
+            }
             if let Ok(abs) = self.safe_join(&folder) {
                 let _ = fs::remove_dir_all(abs);
             }
@@ -1348,7 +1670,7 @@ impl Vault {
         let url = url.as_str();
         let fetched = fetched.ok_or_else(|| other("nothing was fetched"))?;
         // Read the note again: it may have been edited while the fetch ran.
-        let mut note = self.read(&note_id)?;
+        let mut note = self.read(note_id.as_deref().unwrap_or_default())?;
         let mut files = Vec::new();
         let project_line = opts
             .project
@@ -1665,32 +1987,18 @@ impl Vault {
         Ok(out)
     }
 
-    fn new_source_note(&mut self, url: &str, kind: SourceKind, opts: &ImportOptions) -> Result<Note> {
-        let title = opts.title.clone().unwrap_or_else(|| match kind {
-            SourceKind::Github | SourceKind::Git => repo_name(url),
-            _ => {
-                let host = url_host(url).unwrap_or_default();
-                let last = url_path(url)
-                    .trim_matches('/')
-                    .rsplit('/')
-                    .next()
-                    .unwrap_or("")
-                    .to_string();
-                if last.is_empty() {
-                    host
-                } else {
-                    format!("{host} {last}")
-                }
-            }
-        });
-        let title = unique_title(self, &title);
+    /// The note for a first import, made once its fetch succeeded.
+    fn new_source_note(&mut self, job: &PendingImport) -> Result<Note> {
+        // Another note may have taken the title while the fetch ran.
+        let title = unique_title(self, &job.title);
         let mut note = self.create(&title, Some(SOURCE_TYPE), Some(SOURCE_NOTES_DIR))?;
-        note.properties.insert("url".into(), json!(url));
-        note.properties.insert("source_type".into(), json!(kind.as_str()));
-        if let Some(p) = &opts.project {
+        note.properties.insert("url".into(), json!(job.url));
+        note.properties.insert("source_type".into(), json!(job.kind.as_str()));
+        note.properties.insert("folder".into(), json!(job.folder));
+        if let Some(p) = &job.opts.project {
             note.properties.insert("project".into(), json!(format!("[[{p}]]")));
         }
-        Ok(note)
+        self.write(&note)
     }
 
     /// When an import picked up a better title (the page's `<title>`, the PDF's
@@ -1712,14 +2020,9 @@ impl Vault {
         self.read(&id)
     }
 
-    /// Folder for a source's files, created on first use and recorded in the note.
-    fn source_folder(&self, note: &mut Note) -> Result<(String, PathBuf)> {
-        if let Some(rel) = prop_str(note, "folder") {
-            let abs = self.safe_join(&rel)?;
-            fs::create_dir_all(&abs)?;
-            return Ok((rel, abs));
-        }
-        let stem = safe_file_stem(&note.title).replace('/', "-");
+    /// A new, empty folder for a source's files, named after its title.
+    fn new_source_folder(&self, title: &str) -> Result<(String, PathBuf)> {
+        let stem = safe_file_stem(title).replace('/', "-");
         let stem = if stem.is_empty() { "source".to_string() } else { stem };
         let mut rel = format!("{SOURCES_DIR}/{stem}");
         let mut n = 1;
@@ -1729,7 +2032,6 @@ impl Vault {
         }
         let abs = self.safe_join(&rel)?;
         fs::create_dir_all(&abs)?;
-        note.properties.insert("folder".into(), json!(rel));
         Ok((rel, abs))
     }
 }
@@ -1763,6 +2065,28 @@ pub fn encode_md_path(rel: &str) -> String {
         .replace(' ', "%20")
         .replace('(', "%28")
         .replace(')', "%29")
+}
+
+/// A source's title before the import finds a better one: the one asked
+/// for, `owner/repo` for a repository, else host and last path segment.
+fn source_title(url: &str, kind: SourceKind, opts: &ImportOptions) -> String {
+    opts.title.clone().unwrap_or_else(|| match kind {
+        SourceKind::Github | SourceKind::Git => repo_name(url),
+        _ => {
+            let host = url_host(url).unwrap_or_default();
+            let last = url_path(url)
+                .trim_matches('/')
+                .rsplit('/')
+                .next()
+                .unwrap_or("")
+                .to_string();
+            if last.is_empty() {
+                host
+            } else {
+                format!("{host} {last}")
+            }
+        }
+    })
 }
 
 /// A title no existing note has, suffixing `(2)`, `(3)`… when needed.
@@ -2107,8 +2431,12 @@ mod tests {
         assert!(missing.to_string().contains("no public repository"), "{missing}");
     }
 
+    /// Tests that point `GRAPHITE_TOOLS_DIR` somewhere take turns.
+    static TOOLS_ENV: Mutex<()> = Mutex::new(());
+
     #[test]
     fn installs_yt_dlp_after_checking_its_checksum() {
+        let _turn = TOOLS_ENV.lock().unwrap_or_else(|e| e.into_inner());
         let Some(asset) = yt_dlp_asset() else { return };
         let program = b"#!/bin/sh\necho fake yt-dlp\n".to_vec();
         let good = format!("{:x}", Sha256::digest(&program));
@@ -2154,8 +2482,8 @@ mod tests {
         let mut job = v
             .begin_import(&format!("{base}/paper.pdf"), &ImportOptions::default())
             .unwrap();
-        // The note exists while the fetch runs, with its folder recorded.
-        assert_eq!(v.sources().unwrap().len(), 1);
+        // No note while the fetch runs: only the folder it downloads into.
+        assert!(v.sources().unwrap().is_empty());
         assert!(dir.path().join(&job.folder).is_dir());
         let fetched = job.fetch();
         assert!(fetched.is_err());
@@ -2163,5 +2491,116 @@ mod tests {
         assert!(v.finish_import(job, fetched).is_err());
         assert!(v.sources().unwrap().is_empty());
         assert!(!dir.path().join(folder).exists());
+    }
+    /// yt-dlp's format list for a YouTube video, cut down to what matters.
+    fn formats(list: &[(&str, &str, &str, u64, &str, f64)]) -> Value {
+        json!({
+            "formats": list.iter().map(|(id, v, a, h, ext, tbr)| json!({
+                "format_id": id, "vcodec": v, "acodec": a,
+                "height": if *h > 0 { json!(h) } else { Value::Null },
+                "ext": ext, "tbr": tbr,
+            })).collect::<Vec<_>>()
+        })
+    }
+
+    #[test]
+    fn picks_a_format_the_site_offers() {
+        let youtube = formats(&[
+            ("sb0", "none", "none", 0, "mhtml", 0.0),
+            ("18", "avc1", "mp4a", 360, "mp4", 600.0),
+            ("137", "avc1", "none", 1080, "mp4", 4000.0),
+            ("248", "vp9", "none", 1080, "webm", 3000.0),
+            ("401", "av01", "none", 2160, "mp4", 15000.0),
+            ("140", "none", "mp4a", 0, "m4a", 130.0),
+            ("251", "none", "opus", 0, "webm", 140.0),
+        ]);
+        // With ffmpeg: the best picture up to 1080p (MP4 first) joined with M4A sound.
+        assert_eq!(choose_format(&youtube, true), FormatChoice::Use("137+140".into()));
+        // Without: the best stream that already has both.
+        assert_eq!(choose_format(&youtube, false), FormatChoice::Use("18".into()));
+
+        // What YouTube offers when yt-dlp cannot run its player code.
+        let split = formats(&[
+            ("sb0", "none", "none", 0, "mhtml", 0.0),
+            ("136", "avc1", "none", 720, "mp4", 2000.0),
+            ("140", "none", "mp4a", 0, "m4a", 130.0),
+        ]);
+        assert_eq!(choose_format(&split, true), FormatChoice::Use("136+140".into()));
+        assert_eq!(choose_format(&split, false), FormatChoice::NeedsFfmpeg);
+        let storyboards = formats(&[("sb0", "none", "none", 0, "mhtml", 0.0)]);
+        assert_eq!(choose_format(&storyboards, true), FormatChoice::Nothing);
+        assert_eq!(choose_format(&json!({}), true), FormatChoice::Nothing);
+        assert_eq!(
+            choose_format(&json!({"url": "https://x/v.mp4"}), false),
+            FormatChoice::Use("b".into())
+        );
+
+        // A plain file whose codecs are unknown counts as picture and sound.
+        let vimeo = json!({"formats": [
+            {"format_id": "http-720p", "height": 720, "ext": "mp4"},
+            {"format_id": "http-1080p", "height": 1080, "ext": "mp4"},
+        ]});
+        assert_eq!(choose_format(&vimeo, false), FormatChoice::Use("http-1080p".into()));
+        // A podcast: sound only.
+        let audio = formats(&[("mp3", "none", "mp3", 0, "mp3", 128.0)]);
+        assert_eq!(choose_format(&audio, false), FormatChoice::Use("mp3".into()));
+    }
+
+    #[test]
+    fn reads_published_checksums() {
+        let h = "a".repeat(64);
+        let other_hash = "b".repeat(64);
+        // yt-dlp and ffmpeg: one line per file.
+        let sums = format!("{other_hash}  ffmpeg-win32.zip\n{h}  ffmpeg-master-latest-win64-gpl.zip\n");
+        assert_eq!(
+            checksum_for(&sums, "ffmpeg-master-latest-win64-gpl.zip"),
+            Some(h.clone())
+        );
+        assert_eq!(checksum_for(&sums, "missing.zip"), None);
+        // Deno on Windows: PowerShell's Get-FileHash output, upper case.
+        let ps = format!(
+            "\nAlgorithm : SHA256\nHash      : {}\nPath      : D:\\a\\deno-x86_64-pc-windows-msvc.zip\n",
+            h.to_uppercase()
+        );
+        assert_eq!(checksum_for(&ps, "deno-x86_64-pc-windows-msvc.zip"), Some(h.clone()));
+        // Deno elsewhere: `hash  name`.
+        assert_eq!(
+            checksum_for(
+                &format!("{h}  deno-x86_64-unknown-linux-gnu.zip"),
+                "deno-x86_64-unknown-linux-gnu.zip"
+            ),
+            Some(h)
+        );
+    }
+
+    #[test]
+    fn installs_deno_from_its_archive() {
+        let _turn = TOOLS_ENV.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(asset) = deno_asset() else { return };
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        zip.start_file(exe("deno"), zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(b"#!/bin/sh\necho deno\n").unwrap();
+        let zip = zip.finish().unwrap().into_inner();
+        let hash = format!("{:x}", Sha256::digest(&zip));
+        let base = serve_routes(move |path| {
+            if path == format!("/{asset}") {
+                (200, "application/zip", zip.clone())
+            } else if path == format!("/{asset}.sha256sum") {
+                (200, "text/plain", format!("{hash}  {asset}\n").into_bytes())
+            } else {
+                (404, "text/plain", Vec::new())
+            }
+        });
+        let home = tempfile::tempdir().unwrap();
+        std::env::set_var("GRAPHITE_TOOLS_DIR", home.path());
+        std::env::set_var("GRAPHITE_DENO_URL", &base);
+        let path = install_deno().unwrap();
+        assert_eq!(path, home.path().join(exe("deno")));
+        assert_eq!(find_tool("deno").as_deref(), Some(path.as_path()));
+        assert!(yt_dlp_args().contains(&format!("deno:{}", plain_path(&path))));
+        assert_eq!(fs::read_dir(home.path()).unwrap().count(), 1, "the archive is removed");
+        std::env::remove_var("GRAPHITE_TOOLS_DIR");
+        refresh_tools();
     }
 }

@@ -318,6 +318,8 @@ fn open_vault(app: AppHandle, state: State<AppState>, path: String) -> CmdResult
         let mut ids = Vec::new();
         let mut assets = Vec::new();
         let mut sync_needed = false;
+        // A deleted note has no id to report, but the list still has to drop it.
+        let mut notes_removed = false;
         if let Ok(mut guard) = state.vault.lock() {
             if let Some(vault) = guard.as_mut() {
                 for p in &ev.paths {
@@ -340,14 +342,14 @@ fn open_vault(app: AppHandle, state: State<AppState>, path: String) -> CmdResult
                                 assets.push(rel);
                             }
                         }
-                        Ok(None) => {}
+                        Ok(None) => notes_removed |= !p.exists(),
                         Err(e) => tracing::warn!("reindex {}: {e}", p.display()),
                     }
                 }
             }
         }
         let changed_assets = !assets.is_empty();
-        if !ids.is_empty() || changed_assets {
+        if !ids.is_empty() || changed_assets || notes_removed {
             let _ = handle.emit("vault://changed", ChangedPayload { ids, assets });
         }
         if changed_assets {
@@ -765,11 +767,17 @@ fn tools() -> Tools {
     graphite_core::tools()
 }
 
-/// Download yt-dlp for video imports; returns the tools found afterwards.
+/// Video tools this device lacks that `install_video_tools` can download.
 #[tauri::command]
-async fn install_yt_dlp() -> CmdResult<Tools> {
-    blocking(|| graphite_core::install_yt_dlp().map_err(err)).await?;
-    Ok(graphite_core::tools())
+fn missing_video_tools() -> Vec<&'static str> {
+    graphite_core::missing_video_tools()
+}
+
+/// Download yt-dlp (always the newest), and Deno and ffmpeg where missing;
+/// returns the tools found afterwards.
+#[tauri::command]
+async fn install_video_tools() -> CmdResult<Tools> {
+    blocking(|| graphite_core::install_video_tools().map_err(err)).await
 }
 
 // ----- sources (importers) -----
@@ -1099,7 +1107,8 @@ pub fn run() {
             derive_asset,
             derive_assets,
             tools,
-            install_yt_dlp,
+            missing_video_tools,
+            install_video_tools,
             import_url,
             reimport_source,
             sources,

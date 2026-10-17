@@ -128,6 +128,7 @@ export interface Tools {
   pdftoppm: boolean
   git: boolean
   yt_dlp: boolean
+  deno: boolean
   browser: boolean
 }
 
@@ -356,8 +357,10 @@ export const api = {
   deriveAsset: (path: string) => invoke<Asset>('derive_asset', { path }),
   deriveAssets: () => invoke<void>('derive_assets'),
   tools: () => invoke<Tools>('tools'),
-  /** Download yt-dlp into Graphite's tools folder; returns the tools found afterwards. */
-  installYtDlp: () => invoke<Tools>('install_yt_dlp'),
+  /** Video tools (yt-dlp, deno, ffmpeg) missing here that `installVideoTools` can download. */
+  missingVideoTools: () => invoke<string[]>('missing_video_tools'),
+  /** Download the newest yt-dlp plus missing Deno and ffmpeg; returns the tools found afterwards. */
+  installVideoTools: () => invoke<Tools>('install_video_tools'),
   /** Import a URL as a source note; `kind` overrides the importer guessed from the URL. */
   importUrl: (url: string, opts: { kind?: SourceKind; project?: string; title?: string } = {}) =>
     invoke<ImportReport>('import_url', { url, kind: opts.kind ?? null, project: opts.project ?? null, title: opts.title ?? null }),

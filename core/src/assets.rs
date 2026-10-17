@@ -186,6 +186,8 @@ pub struct Tools {
     pub pdftoppm: bool,
     pub git: bool,
     pub yt_dlp: bool,
+    /// A JavaScript runtime yt-dlp uses for YouTube.
+    pub deno: bool,
     /// A Chromium-based browser for page screenshots.
     pub browser: bool,
 }
@@ -205,6 +207,7 @@ pub fn tools() -> Tools {
         pdftoppm: find_tool("pdftoppm").is_some(),
         git: find_tool("git").is_some(),
         yt_dlp: find_tool("yt-dlp").is_some(),
+        deno: find_tool("deno").is_some(),
         browser: crate::sources::browser_binary().is_some(),
     };
     *TOOLS.write().unwrap_or_else(|e| e.into_inner()) = Some(t);
@@ -217,7 +220,7 @@ pub fn refresh_tools() -> Tools {
     tools()
 }
 
-/// Where Graphite keeps programs it downloads itself (yt-dlp):
+/// Where Graphite keeps programs it downloads itself (yt-dlp, Deno, ffmpeg):
 /// `GRAPHITE_TOOLS_DIR`, else `Graphite/tools` in the user's local data folder.
 pub fn tools_dir() -> Option<PathBuf> {
     if let Some(d) = std::env::var_os("GRAPHITE_TOOLS_DIR") {
