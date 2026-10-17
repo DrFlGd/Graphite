@@ -44,11 +44,13 @@ export function ImportDialog({ request, notes, onClose, onDone, onError }: Props
   const [busy, setBusy] = useState(false)
   const [failure, setFailure] = useState<string | null>(null)
   const [installing, setInstalling] = useState(false)
+  const [videoMissing, setVideoMissing] = useState<string[]>([])
   const input = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     input.current?.focus()
     void api.tools().then(setTools).catch(() => {})
+    void api.missingVideoTools().then(setVideoMissing).catch(() => {})
   }, [])
 
   // Which importer the URL would get, as the user types.
@@ -86,11 +88,16 @@ export function ImportDialog({ request, notes, onClose, onDone, onError }: Props
   const missingTool = tools ? missingToolFor(effective, url.trim(), tools) : null
   const projects = notes.filter((n) => n.type === 'project')
 
-  const installYtDlp = async () => {
+  // Offered while something is missing, and after a failed video import,
+  // since a newer yt-dlp is the usual fix when a site changes.
+  const showVideoTools = effective === 'video' && (videoMissing.length > 0 || failure !== null)
+
+  const installVideoTools = async () => {
     setInstalling(true)
     setFailure(null)
     try {
-      setTools(await api.installYtDlp())
+      setTools(await api.installVideoTools())
+      setVideoMissing(await api.missingVideoTools())
     } catch (e) {
       setFailure(String(e))
     } finally {
@@ -148,12 +155,12 @@ export function ImportDialog({ request, notes, onClose, onDone, onError }: Props
               {missingTool === 'git' && <strong> git is not installed. It is needed for repositories outside GitHub.</strong>}
               {missingTool === 'yt-dlp' && <strong> Video import needs yt-dlp, which is not installed.</strong>}
             </p>
-            {missingTool === 'yt-dlp' && (
+            {showVideoTools && (
               <div className="import__install">
-                <button type="button" className="btn" onClick={() => void installYtDlp()} disabled={installing || busy}>
-                  {installing ? 'Downloading yt-dlp…' : 'Download yt-dlp'}
+                <button type="button" className="btn" onClick={() => void installVideoTools()} disabled={installing || busy}>
+                  {installing ? 'Downloading…' : videoMissing.length > 0 ? 'Download video tools' : 'Update yt-dlp'}
                 </button>
-                <span className="qv__muted">About 40 MB, from the yt-dlp project on GitHub.</span>
+                <span className="qv__muted">{videoToolsNote(videoMissing)}</span>
               </div>
             )}
             <div className="import__fields">
@@ -186,6 +193,22 @@ export function ImportDialog({ request, notes, onClose, onDone, onError }: Props
       </div>
     </div>
   )
+}
+
+const VIDEO_TOOLS: Record<string, { name: string; mb: number }> = {
+  'yt-dlp': { name: 'yt-dlp', mb: 40 },
+  deno: { name: 'Deno', mb: 45 },
+  ffmpeg: { name: 'ffmpeg', mb: 200 },
+}
+
+/** What the video tools button will download, in a line. */
+export function videoToolsNote(missing: string[]): string {
+  const tools = missing.map((m) => VIDEO_TOOLS[m]).filter(Boolean)
+  if (tools.length === 0) return 'Gets the newest yt-dlp, which usually fixes errors after a site changes.'
+  const names = tools.map((t) => t.name)
+  const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
+  const mb = tools.reduce((sum, t) => sum + t.mb, 0)
+  return `Gets ${list} from ${tools.length === 1 ? 'its' : 'their'} official releases, about ${mb} MB.`
 }
 
 /** The program an import of this kind and URL needs but cannot find, if any. */

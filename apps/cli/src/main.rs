@@ -89,9 +89,10 @@ enum Cmd {
     },
     /// Which optional tools (ffmpeg, poppler, git, yt-dlp) were found on the PATH
     Tools {
-        /// Download yt-dlp (for video imports) into Graphite's own tools folder
-        #[arg(long)]
-        install_yt_dlp: bool,
+        /// Download what video import needs (yt-dlp, Deno, and ffmpeg on
+        /// Windows) into Graphite's own tools folder
+        #[arg(long, alias = "install-yt-dlp")]
+        install_video_tools: bool,
     },
     /// Import a URL: a GitHub repo, a web page, a YouTube video, a PDF or any file
     Import {
@@ -277,10 +278,12 @@ fn main() {
 }
 
 /// `graphite tools`: needs no vault, so it runs before one is opened.
-fn tools_cmd(json: bool, install_yt_dlp: bool) -> Result<()> {
-    if install_yt_dlp {
-        let path = graphite_core::install_yt_dlp()?;
-        eprintln!("yt-dlp saved to {}", path.display());
+fn tools_cmd(json: bool, install_video_tools: bool) -> Result<()> {
+    if install_video_tools {
+        graphite_core::install_video_tools()?;
+        if let Some(dir) = graphite_core::assets::tools_dir() {
+            eprintln!("video tools are in {}", dir.display());
+        }
     }
     let t = graphite_core::tools();
     if json {
@@ -294,6 +297,7 @@ fn tools_cmd(json: bool, install_yt_dlp: bool) -> Result<()> {
             ("pdftoppm", t.pdftoppm, "PDF thumbnails"),
             ("git", t.git, "repositories outside GitHub (GitHub works without it)"),
             ("yt-dlp", t.yt_dlp, "video importer"),
+            ("deno", t.deno, "lets yt-dlp see all YouTube formats"),
             ("browser", t.browser, "web page screenshots (Chromium, Chrome or Edge)"),
         ] {
             println!("{:<10} {}  {}", name, if ok { "found  " } else { "missing" }, what);
@@ -304,8 +308,8 @@ fn tools_cmd(json: bool, install_yt_dlp: bool) -> Result<()> {
 
 fn run() -> Result<()> {
     let cli = Cli::parse();
-    if let Cmd::Tools { install_yt_dlp } = cli.cmd {
-        return tools_cmd(cli.json, install_yt_dlp);
+    if let Cmd::Tools { install_video_tools } = cli.cmd {
+        return tools_cmd(cli.json, install_video_tools);
     }
     let root = cli
         .vault
