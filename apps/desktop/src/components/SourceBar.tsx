@@ -44,8 +44,8 @@ export function SourceBar({ note, onReplace, onOpenUrl, onError }: Props) {
     if (!window.confirm(`Fetch "${note.title}" again? Its files and the note text are replaced; your front-matter properties and tags are kept.`)) return
     setBusy('reimport')
     try {
-      const report = await api.reimportSource(note.id)
-      onReplace(report.note)
+      // Runs in the background; the note reloads when the files change.
+      await api.startReimport(note.id)
     } catch (e) {
       onError(String(e))
     } finally {

@@ -280,7 +280,7 @@ fn main() {
 /// `graphite tools`: needs no vault, so it runs before one is opened.
 fn tools_cmd(json: bool, install_video_tools: bool) -> Result<()> {
     if install_video_tools {
-        graphite_core::install_video_tools()?;
+        graphite_core::install_video_tools(&graphite_core::Unwatched)?;
         if let Some(dir) = graphite_core::assets::tools_dir() {
             eprintln!("video tools are in {}", dir.display());
         }

@@ -1,16 +1,17 @@
 //! Tauri shell: holds the open vault and exposes core operations as
 //! commands. The UI never touches the file system directly.
 
+mod jobs;
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use graphite_core::{
-    Asset, AssetHit, AssetKind, Backlink, Graph, ImportOptions, ImportReport, Item, ItemFilter, ItemKind, ItemRow,
-    ItemStatus, Note, NoteSummary, PendingImport, Progress, ProjectHub, QueryResult, RelayConfig, SearchHit, Snapshot,
-    SourceKind, SourceRow, SyncReport, SyncStatus, Template, Tools, UpdateCheck, Vault, VaultConfig, VaultInfo,
-    Version, Watcher,
+    Asset, AssetHit, AssetKind, Backlink, Graph, Item, ItemFilter, ItemKind, ItemRow, ItemStatus, Note, NoteSummary,
+    Progress, ProjectHub, QueryResult, RelayConfig, SearchHit, Snapshot, SourceRow, SyncReport, SyncStatus, Template,
+    Tools, UpdateCheck, Vault, VaultConfig, VaultInfo, Version, Watcher,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -31,6 +32,8 @@ struct AppState {
     relay_listener: AtomicBool,
     /// Bumped when the relay settings change so the listener reconnects.
     relay_generation: std::sync::atomic::AtomicU64,
+    /// Imports and tool downloads running in the background.
+    jobs: jobs::Jobs,
 }
 
 /// Take a vault snapshot if the newest is a day old, and check again every
@@ -773,63 +776,14 @@ fn missing_video_tools() -> Vec<&'static str> {
     graphite_core::missing_video_tools()
 }
 
-/// Download yt-dlp (always the newest), and Deno and ffmpeg where missing;
-/// returns the tools found afterwards.
-#[tauri::command]
-async fn install_video_tools() -> CmdResult<Tools> {
-    blocking(|| graphite_core::install_video_tools().map_err(err)).await
-}
-
 // ----- sources (importers) -----
-// Fetching can take minutes (a clone, a video), so it runs off the main
-// thread and without the vault lock: only the short steps before and after
-// it hold the vault, and the window keeps working meanwhile.
+// Imports and tool downloads run as background jobs (see `jobs.rs`). Update
+// checks are quick, but still fetch off the main thread and without the
+// vault lock.
 
 /// Run blocking work on a worker thread.
 async fn blocking<T: Send + 'static>(f: impl FnOnce() -> CmdResult<T> + Send + 'static) -> CmdResult<T> {
     tauri::async_runtime::spawn_blocking(f).await.map_err(err)?
-}
-
-/// Fetch a started import, then record it in the vault.
-async fn run_import(app: &AppHandle, state: &State<'_, AppState>, mut job: PendingImport) -> CmdResult<ImportReport> {
-    let (job, fetched) = blocking(move || {
-        let fetched = job.fetch();
-        Ok((job, fetched))
-    })
-    .await?;
-    let report = with_vault(state, |v| v.finish_import(job, fetched))?;
-    start_deriver(app);
-    Ok(report)
-}
-
-/// Import a URL (GitHub repo, web page, video, PDF or file) as a source note.
-#[tauri::command]
-async fn import_url(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    url: String,
-    kind: Option<String>,
-    project: Option<String>,
-    title: Option<String>,
-) -> CmdResult<ImportReport> {
-    let kind = match kind.as_deref() {
-        Some(k) => Some(SourceKind::parse(k).ok_or_else(|| format!("unknown importer: {k}"))?),
-        None => None,
-    };
-    let opts = ImportOptions {
-        kind,
-        project: project.filter(|p| !p.trim().is_empty()),
-        title: title.filter(|t| !t.trim().is_empty()),
-    };
-    let job = with_vault(&state, |v| v.begin_import(&url, &opts))?;
-    run_import(&app, &state, job).await
-}
-
-/// Fetch a source again, replacing its files and note body.
-#[tauri::command]
-async fn reimport_source(app: AppHandle, state: State<'_, AppState>, id: String) -> CmdResult<ImportReport> {
-    let job = with_vault(&state, |v| v.begin_reimport(&id))?;
-    run_import(&app, &state, job).await
 }
 
 /// Every source note with its record (url, kind, last check, update flag).
@@ -1108,9 +1062,12 @@ pub fn run() {
             derive_assets,
             tools,
             missing_video_tools,
-            install_video_tools,
-            import_url,
-            reimport_source,
+            jobs::start_import,
+            jobs::start_reimport,
+            jobs::start_install_video_tools,
+            jobs::jobs,
+            jobs::cancel_job,
+            jobs::dismiss_job,
             sources,
             check_source,
             check_all_sources,
@@ -1146,6 +1103,12 @@ pub fn run() {
             #[cfg(desktop)]
             open_in_main,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Graphite");
+        .build(tauri::generate_context!())
+        .expect("error while running Graphite")
+        .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                // Imports still running would leave half-downloaded folders.
+                app.state::<AppState>().jobs.stop_all(std::time::Duration::from_secs(5));
+            }
+        });
 }

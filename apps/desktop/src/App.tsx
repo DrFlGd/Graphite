@@ -20,6 +20,7 @@ import { AssetView } from './components/AssetView'
 import { FilesView } from './components/FilesView'
 import { SourcesView } from './components/SourcesView'
 import { ImportDialog, type ImportRequest } from './components/ImportDialog'
+import { JobsPanel } from './components/JobsPanel'
 import { SyncDialog } from './components/SyncDialog'
 import { GraphView, type GraphMode } from './components/GraphView'
 import { Palette, type Command, type PaletteMode } from './components/Palette'
@@ -391,6 +392,12 @@ export function App() {
     [refreshList],
   )
 
+  // A background import finished: show its note in the list and its files' previews.
+  const onJobFinished = useCallback(() => {
+    setAssetVersion((v) => v + 1)
+    void refreshList()
+  }, [refreshList])
+
   // Notes changed on disk by something else (or the capture window).
   useEffect(() => {
     if (!vault) return
@@ -760,14 +767,10 @@ export function App() {
           request={importing}
           notes={notes}
           onClose={() => setImporting(null)}
-          onError={setError}
-          onDone={(report) => {
-            setImporting(null)
-            setAssetVersion((v) => v + 1)
-            void refreshList().then(() => openNote(report.note.id))
-          }}
+          onStarted={() => setImporting(null)}
         />
       )}
+      <JobsPanel onOpen={(id) => openNote(id)} onFinished={onJobFinished} onError={setError} />
       {error && (
         <div className="app__error" role="alert" onClick={() => setError(null)}>
           {error}

@@ -16,9 +16,9 @@ describe('missingToolFor', () => {
     expect(missingToolFor('video', 'https://youtu.be/x', tools({ yt_dlp: true }))).toBeNull()
     expect(missingToolFor('page', 'https://example.com', tools({}))).toBeNull()
   })
-  it('says what the video tools button downloads', () => {
-    expect(videoToolsNote(['yt-dlp', 'deno', 'ffmpeg'])).toBe('Gets yt-dlp, Deno and ffmpeg from their official releases, about 285 MB.')
-    expect(videoToolsNote(['deno'])).toBe('Gets Deno from its official releases, about 45 MB.')
-    expect(videoToolsNote([])).toMatch(/newest yt-dlp/)
+  it('says what a video import downloads first', () => {
+    expect(videoToolsNote(['yt-dlp', 'deno', 'ffmpeg'])).toBe('Video import needs yt-dlp, Deno and ffmpeg; the import downloads them first (about 285 MB).')
+    expect(videoToolsNote(['deno'])).toBe('Video import needs Deno; the import downloads it first (about 45 MB).')
+    expect(videoToolsNote([])).toBe('')
   })
 })
