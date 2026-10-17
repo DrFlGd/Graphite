@@ -41,8 +41,8 @@ pub use query::{Domain, Group, NoteRow, Query, QueryResult};
 pub use relay::{RelayConfig, RelayReport, RelayStatus};
 pub use snapshot::Snapshot;
 pub use sources::{
-    classify_url, install_video_tools, missing_video_tools, ImportOptions, ImportReport, PendingCheck, PendingImport,
-    SourceKind, SourceRow, UpdateCheck,
+    classify_url, install_video_tools, missing_video_tools, ImportControl, ImportOptions, ImportReport, PendingCheck,
+    PendingImport, SourceKind, SourceRow, Unwatched, UpdateCheck, CANCELLED,
 };
 pub use sync::{content_hash, SyncDevice, SyncReport, SyncStatus};
 pub use tasks::{Item, ItemKind, ItemStatus, Progress};

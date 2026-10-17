@@ -120,6 +120,37 @@ export interface UpdateCheck {
   checked: string
 }
 
+export interface StartImport {
+  url: string
+  kind?: SourceKind
+  project?: string
+  title?: string
+  /** Download the video tools first. */
+  withTools?: boolean
+  /** An inbox capture the import replaces, deleted once it succeeded. */
+  captureId?: string
+}
+
+export type JobState = 'running' | 'done' | 'failed' | 'cancelled'
+
+/** An import, re-import or tool download running in the background. */
+export interface Job {
+  id: number
+  kind: 'import' | 'reimport' | 'tools'
+  label: string
+  source: SourceKind | null
+  stage: string
+  /** Bytes so far and in all, when the current stage counts them. */
+  done: number
+  total: number | null
+  state: JobState
+  error: string | null
+  noteId: string | null
+  summary: string | null
+  request: (Omit<StartImport, 'kind'> & { kind: SourceKind | null }) | null
+  sourceId: string | null
+}
+
 export interface Tools {
   ffmpeg: boolean
   ffprobe: boolean
@@ -359,12 +390,19 @@ export const api = {
   tools: () => invoke<Tools>('tools'),
   /** Video tools (yt-dlp, deno, ffmpeg) missing here that `installVideoTools` can download. */
   missingVideoTools: () => invoke<string[]>('missing_video_tools'),
-  /** Download the newest yt-dlp plus missing Deno and ffmpeg; returns the tools found afterwards. */
-  installVideoTools: () => invoke<Tools>('install_video_tools'),
-  /** Import a URL as a source note; `kind` overrides the importer guessed from the URL. */
-  importUrl: (url: string, opts: { kind?: SourceKind; project?: string; title?: string } = {}) =>
-    invoke<ImportReport>('import_url', { url, kind: opts.kind ?? null, project: opts.project ?? null, title: opts.title ?? null }),
-  reimportSource: (id: string) => invoke<ImportReport>('reimport_source', { id }),
+  /** Import a URL as a source note in the background; returns the job's id. */
+  startImport: (request: StartImport) =>
+    invoke<number>('start_import', {
+      request: { url: request.url, kind: request.kind ?? null, project: request.project ?? null, title: request.title ?? null, withTools: request.withTools ?? false, captureId: request.captureId ?? null },
+    }),
+  /** Fetch a source again in the background; `withTools` updates the video tools first. */
+  startReimport: (id: string, withTools = false) => invoke<number>('start_reimport', { id, withTools }),
+  /** Download the newest yt-dlp plus missing Deno and ffmpeg in the background. */
+  startInstallVideoTools: () => invoke<number>('start_install_video_tools'),
+  jobs: () => invoke<Job[]>('jobs'),
+  cancelJob: (id: number) => invoke<void>('cancel_job', { id }),
+  dismissJob: (id: number) => invoke<void>('dismiss_job', { id }),
+  onJobsChanged: (cb: (jobs: Job[]) => void): Promise<UnlistenFn> => listen<Job[]>('jobs://changed', (e) => cb(e.payload)),
   sources: () => invoke<SourceRow[]>('sources'),
   checkSource: (id: string) => invoke<UpdateCheck>('check_source', { id }),
   /** Check sources not checked in the last `maxAgeHours` (all when omitted). */

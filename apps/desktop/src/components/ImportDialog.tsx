@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, SOURCE_KIND_LABEL, type ImportReport, type NoteSummary, type SourceKind, type Tools } from '../api'
+import { api, SOURCE_KIND_LABEL, type NoteSummary, type SourceKind, type Tools } from '../api'
 import { SourceKindIcon } from './sources'
 
 export interface ImportRequest {
@@ -15,8 +15,8 @@ interface Props {
   request: ImportRequest
   notes: NoteSummary[]
   onClose: () => void
-  onDone: (report: ImportReport) => void
-  onError: (e: string) => void
+  /** The import is running in the background. */
+  onStarted: () => void
 }
 
 const KINDS: SourceKind[] = ['github', 'page', 'video', 'pdf', 'file', 'git']
@@ -34,7 +34,7 @@ const KIND_HINT: Record<SourceKind, string> = {
  * "Import from URL": paste a link, see which importer will handle it,
  * optionally pick another one, a project and a title, then fetch.
  */
-export function ImportDialog({ request, notes, onClose, onDone, onError }: Props) {
+export function ImportDialog({ request, notes, onClose, onStarted }: Props) {
   const [url, setUrl] = useState(request.url ?? '')
   const [guess, setGuess] = useState<SourceKind | null>(null)
   const [kind, setKind] = useState<SourceKind | ''>('')
@@ -43,7 +43,6 @@ export function ImportDialog({ request, notes, onClose, onDone, onError }: Props
   const [tools, setTools] = useState<Tools | null>(null)
   const [busy, setBusy] = useState(false)
   const [failure, setFailure] = useState<string | null>(null)
-  const [installing, setInstalling] = useState(false)
   const [videoMissing, setVideoMissing] = useState<string[]>([])
   const input = useRef<HTMLInputElement>(null)
 
@@ -88,37 +87,20 @@ export function ImportDialog({ request, notes, onClose, onDone, onError }: Props
   const missingTool = tools ? missingToolFor(effective, url.trim(), tools) : null
   const projects = notes.filter((n) => n.type === 'project')
 
-  // Offered while something is missing, and after a failed video import,
-  // since a newer yt-dlp is the usual fix when a site changes.
-  const showVideoTools = effective === 'video' && (videoMissing.length > 0 || failure !== null)
+  // A video import first downloads whatever video tools are missing.
+  const needsTools = effective === 'video' && videoMissing.length > 0
 
-  const installVideoTools = async () => {
-    setInstalling(true)
-    setFailure(null)
-    try {
-      setTools(await api.installVideoTools())
-      setVideoMissing(await api.missingVideoTools())
-    } catch (e) {
-      setFailure(String(e))
-    } finally {
-      setInstalling(false)
-    }
-  }
-
+  // The import runs in the background; only a request that cannot start
+  // (not a URL) keeps the window open with the reason.
   const go = async () => {
-    if (!valid || busy || installing) return
+    if (!valid || busy) return
     setBusy(true)
     setFailure(null)
     try {
-      const report = await api.importUrl(url.trim(), { kind: kind || undefined, project: project.trim() || undefined, title: title.trim() || undefined })
-      if (request.captureId) {
-        await api.deleteNote(request.captureId).catch(() => {})
-      }
-      onDone(report)
+      await api.startImport({ url: url.trim(), kind: kind || undefined, project: project.trim() || undefined, title: title.trim() || undefined, withTools: needsTools, captureId: request.captureId })
+      onStarted()
     } catch (e) {
       setFailure(String(e))
-      onError(String(e))
-    } finally {
       setBusy(false)
     }
   }
@@ -153,16 +135,8 @@ export function ImportDialog({ request, notes, onClose, onDone, onError }: Props
             <p className="import__hint">
               {effective ? KIND_HINT[effective] : 'The importer is picked from the link; click one to override.'}
               {missingTool === 'git' && <strong> git is not installed. It is needed for repositories outside GitHub.</strong>}
-              {missingTool === 'yt-dlp' && <strong> Video import needs yt-dlp, which is not installed.</strong>}
+              {needsTools && <strong> {videoToolsNote(videoMissing)}</strong>}
             </p>
-            {showVideoTools && (
-              <div className="import__install">
-                <button type="button" className="btn" onClick={() => void installVideoTools()} disabled={installing || busy}>
-                  {installing ? 'Downloading…' : videoMissing.length > 0 ? 'Download video tools' : 'Update yt-dlp'}
-                </button>
-                <span className="qv__muted">{videoToolsNote(videoMissing)}</span>
-              </div>
-            )}
             <div className="import__fields">
               <label>
                 Project
@@ -181,12 +155,12 @@ export function ImportDialog({ request, notes, onClose, onDone, onError }: Props
             {failure && <p className="import__failure">{failure}</p>}
           </div>
           <div className="picker__footer">
-            <span className="qv__muted">{busy ? 'Fetching… this can take a while for a repository or a video.' : request.captureId ? 'The inbox capture is removed once the import succeeds.' : 'Files go under attachments/sources/, the note under notes/Sources/.'}</span>
+            <span className="qv__muted">{request.captureId ? 'The inbox capture is removed once the import succeeds.' : 'Runs in the background; files go under attachments/sources/.'}</span>
             <button type="button" className="btn" onClick={onClose} disabled={busy}>
               Cancel
             </button>
-            <button type="submit" className="btn btn--primary" disabled={!valid || busy || installing}>
-              {busy ? 'Importing…' : 'Import'}
+            <button type="submit" className="btn btn--primary" disabled={!valid || busy}>
+              Import
             </button>
           </div>
         </form>
@@ -201,14 +175,14 @@ const VIDEO_TOOLS: Record<string, { name: string; mb: number }> = {
   ffmpeg: { name: 'ffmpeg', mb: 200 },
 }
 
-/** What the video tools button will download, in a line. */
+/** What a video import downloads first, in a line. */
 export function videoToolsNote(missing: string[]): string {
   const tools = missing.map((m) => VIDEO_TOOLS[m]).filter(Boolean)
-  if (tools.length === 0) return 'Gets the newest yt-dlp, which usually fixes errors after a site changes.'
+  if (tools.length === 0) return ''
   const names = tools.map((t) => t.name)
   const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
   const mb = tools.reduce((sum, t) => sum + t.mb, 0)
-  return `Gets ${list} from ${tools.length === 1 ? 'its' : 'their'} official releases, about ${mb} MB.`
+  return `Video import needs ${list}; the import downloads ${tools.length === 1 ? 'it' : 'them'} first (about ${mb} MB).`
 }
 
 /** The program an import of this kind and URL needs but cannot find, if any. */

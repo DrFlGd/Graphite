@@ -21,6 +21,8 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::mpsc;
+use std::thread;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
@@ -230,6 +232,31 @@ fn other(msg: impl Into<String>) -> Error {
     Error::Io(std::io::Error::other(msg.into()))
 }
 
+/// Where a running import or tool download reports progress, and how it
+/// learns that it should stop.
+pub trait ImportControl: Sync {
+    /// `stage` says what is happening; `done` and `total` count bytes when known.
+    fn progress(&self, stage: &str, done: u64, total: Option<u64>);
+    fn cancelled(&self) -> bool;
+}
+
+/// For work nobody is watching.
+pub struct Unwatched;
+
+impl ImportControl for Unwatched {
+    fn progress(&self, _: &str, _: u64, _: Option<u64>) {}
+    fn cancelled(&self) -> bool {
+        false
+    }
+}
+
+/// The error a cancelled import fails with.
+pub const CANCELLED: &str = "Cancelled";
+
+fn cancelled() -> Error {
+    other(CANCELLED)
+}
+
 /// TLS for every outgoing connection. The platform verifier trusts the OS
 /// certificate store, so corporate proxies and SSL_CERT_FILE work as they
 /// do for the browser; Android has no such store reachable from Rust, so
@@ -243,10 +270,15 @@ pub(crate) fn tls_config() -> ureq::tls::TlsConfig {
 }
 
 fn agent() -> ureq::Agent {
+    // No limit on the whole call: a large file on a slow line takes as long
+    // as it takes, and the user can cancel it. Reaching the server and its
+    // first answer still time out.
     ureq::Agent::config_builder()
         .tls_config(tls_config())
         .user_agent(USER_AGENT)
-        .timeout_global(Some(Duration::from_secs(60)))
+        .timeout_connect(Some(Duration::from_secs(30)))
+        .timeout_recv_response(Some(Duration::from_secs(60)))
+        .timeout_recv_body(Some(Duration::from_secs(60 * 60)))
         .max_redirects(10)
         .http_status_as_error(true)
         .build()
@@ -255,26 +287,79 @@ fn agent() -> ureq::Agent {
 
 /// GET a URL as text (pages, info JSON), capped at 20 MB.
 fn fetch_text(url: &str) -> Result<(String, Option<String>)> {
-    let mut resp = agent().get(url).call().map_err(http_err)?;
-    let ctype = resp
-        .headers()
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string());
-    let text = resp
-        .body_mut()
-        .with_config()
-        .limit(20 * 1024 * 1024)
-        .lossy_utf8(true)
-        .read_to_string()
-        .map_err(http_err)?;
-    Ok((text, ctype))
+    fetch_text_with(url, &Unwatched, "")
+}
+
+/// `fetch_text`, reporting bytes under `stage` and stopping when cancelled.
+/// Send a GET under `stage`, giving up at once when cancelled even while the
+/// server has not answered yet (the request is left to finish on its own).
+fn get_watched(url: &str, ctl: &dyn ImportControl, stage: &str) -> Result<ureq::http::Response<ureq::Body>> {
+    ctl.progress(stage, 0, None);
+    let (tx, rx) = mpsc::channel();
+    let url = url.to_string();
+    thread::spawn(move || {
+        let _ = tx.send(agent().get(&url).call());
+    });
+    loop {
+        match rx.recv_timeout(Duration::from_millis(200)) {
+            Ok(resp) => return resp.map_err(http_err),
+            Err(mpsc::RecvTimeoutError::Timeout) if ctl.cancelled() => return Err(cancelled()),
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => return Err(other("download failed")),
+        }
+    }
+}
+
+fn fetch_text_with(url: &str, ctl: &dyn ImportControl, stage: &str) -> Result<(String, Option<String>)> {
+    const LIMIT: u64 = 20 * 1024 * 1024;
+    let mut resp = get_watched(url, ctl, stage)?;
+    let header = |name: &str| {
+        resp.headers()
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string())
+    };
+    let ctype = header("content-type");
+    let total = header("content-length").and_then(|v| v.parse::<u64>().ok());
+    let mut reader = resp.body_mut().with_config().limit(LIMIT).reader();
+    let mut bytes = Vec::new();
+    let mut buf = vec![0u8; 1 << 16];
+    ctl.progress(stage, 0, total);
+    loop {
+        if ctl.cancelled() {
+            return Err(cancelled());
+        }
+        let n = reader
+            .read(&mut buf)
+            .map_err(|e| other(format!("download failed: {e}")))?;
+        if n == 0 {
+            break;
+        }
+        bytes.extend_from_slice(&buf[..n]);
+        ctl.progress(stage, bytes.len() as u64, total);
+    }
+    Ok((String::from_utf8_lossy(&bytes).into_owned(), ctype))
 }
 
 /// Stream a URL into a file, returning its SHA-256 and the final file name
 /// hint from headers.
 fn fetch_to_file(url: &str, dest: &Path) -> Result<(String, Option<String>)> {
-    let mut resp = agent().get(url).call().map_err(http_err)?;
+    fetch_to_file_with(url, dest, &Unwatched, "")
+}
+
+/// `fetch_to_file`, reporting bytes under `stage` and stopping when cancelled.
+fn fetch_to_file_with(
+    url: &str,
+    dest: &Path,
+    ctl: &dyn ImportControl,
+    stage: &str,
+) -> Result<(String, Option<String>)> {
+    let mut resp = get_watched(url, ctl, stage)?;
+    let total = resp
+        .headers()
+        .get("content-length")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<u64>().ok());
     let disposition = resp
         .headers()
         .get("content-disposition")
@@ -291,7 +376,14 @@ fn fetch_to_file(url: &str, dest: &Path) -> Result<(String, Option<String>)> {
     let mut file = fs::File::create(dest)?;
     let mut hasher = Sha256::new();
     let mut buf = vec![0u8; 1 << 16];
+    let mut done = 0u64;
+    ctl.progress(stage, 0, total);
     loop {
+        if ctl.cancelled() {
+            drop(file);
+            let _ = fs::remove_file(dest);
+            return Err(cancelled());
+        }
         let n = reader
             .read(&mut buf)
             .map_err(|e| other(format!("download failed: {e}")))?;
@@ -300,6 +392,8 @@ fn fetch_to_file(url: &str, dest: &Path) -> Result<(String, Option<String>)> {
         }
         hasher.update(&buf[..n]);
         file.write_all(&buf[..n])?;
+        done += n as u64;
+        ctl.progress(stage, done, total);
     }
     Ok((format!("{:x}", hasher.finalize()), disposition))
 }
@@ -332,6 +426,74 @@ fn run(cmd: &str, args: &[&str], cwd: Option<&Path>) -> std::result::Result<Stri
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     } else {
         let err = String::from_utf8_lossy(&out.stderr);
+        Err(format!(
+            "{cmd} {}: {}",
+            args.first().unwrap_or(&""),
+            err.trim().lines().last().unwrap_or("failed")
+        ))
+    }
+}
+
+/// `run`, but stops the program when the import is cancelled and hands
+/// each line it prints to `on_line` as it comes.
+fn run_watched(
+    cmd: &str,
+    args: &[&str],
+    cwd: Option<&Path>,
+    ctl: &dyn ImportControl,
+    mut on_line: impl FnMut(&str),
+) -> std::result::Result<String, String> {
+    use std::io::BufRead;
+    let mut c = command(cmd);
+    c.args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(d) = cwd {
+        c.current_dir(d);
+    }
+    let mut child = c.spawn().map_err(|e| format!("{cmd}: {e}"))?;
+    let (stdout, stderr) = (child.stdout.take(), child.stderr.take());
+    let (tx, rx) = mpsc::channel();
+    let reader = thread::spawn(move || {
+        if let Some(out) = stdout {
+            for line in std::io::BufReader::new(out).lines().map_while(std::result::Result::ok) {
+                if tx.send(line).is_err() {
+                    break;
+                }
+            }
+        }
+    });
+    let errors = thread::spawn(move || {
+        let mut text = String::new();
+        if let Some(mut err) = stderr {
+            let _ = err.read_to_string(&mut text);
+        }
+        text
+    });
+    let mut out = String::new();
+    loop {
+        match rx.recv_timeout(Duration::from_millis(200)) {
+            Ok(line) => {
+                on_line(&line);
+                out.push_str(&line);
+                out.push('\n');
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+        if ctl.cancelled() {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(CANCELLED.to_string());
+        }
+    }
+    let status = child.wait().map_err(|e| format!("{cmd}: {e}"))?;
+    let _ = reader.join();
+    let err = errors.join().unwrap_or_default();
+    if status.success() {
+        Ok(out)
+    } else {
         Err(format!(
             "{cmd} {}: {}",
             args.first().unwrap_or(&""),
@@ -435,18 +597,25 @@ fn remote_head(url: &str) -> Result<String> {
 
 /// Shallow clone (or update) `url` into `repo`; returns the commit, its
 /// date and its subject line.
-fn git_checkout(url: &str, repo: &Path) -> Result<(String, String, String)> {
+fn git_checkout(url: &str, repo: &Path, ctl: &dyn ImportControl) -> Result<(String, String, String)> {
+    let git = |args: &[&str], cwd: Option<&Path>| {
+        run_watched("git", args, cwd, ctl, |_| {}).map_err(|e| if e == CANCELLED { cancelled() } else { other(e) })
+    };
     if repo.join(".git").is_dir() {
-        run("git", &["fetch", "--depth", "1", "origin", "HEAD"], Some(repo)).map_err(other)?;
-        run("git", &["reset", "--hard", "FETCH_HEAD"], Some(repo)).map_err(other)?;
+        ctl.progress("Fetching new commits", 0, None);
+        git(&["fetch", "--depth", "1", "origin", "HEAD"], Some(repo))?;
+        git(&["reset", "--hard", "FETCH_HEAD"], Some(repo))?;
     } else {
+        ctl.progress("Cloning the repository", 0, None);
         let _ = fs::remove_dir_all(repo);
-        run(
-            "git",
+        let cloned = git(
             &["clone", "--depth", "1", "--quiet", &clone_url(url), &plain_path(repo)],
             None,
-        )
-        .map_err(other)?;
+        );
+        if cloned.is_err() {
+            let _ = fs::remove_dir_all(repo);
+        }
+        cloned?;
     }
     let commit = run("git", &["rev-parse", "HEAD"], Some(repo))
         .map_err(other)?
@@ -509,12 +678,14 @@ fn github_head(owner: &str, name: &str) -> Result<(String, String, String)> {
 
 /// Download a GitHub repository's files at its latest commit into `dest`
 /// (a zip archive, so git is not needed).
-fn github_download(owner: &str, name: &str, dest: &Path) -> Result<(String, String, String)> {
+fn github_download(owner: &str, name: &str, dest: &Path, ctl: &dyn ImportControl) -> Result<(String, String, String)> {
     let head = github_head(owner, name)?;
     let zip = dest.with_extension("zip.part");
-    let fetched = fetch_to_file(
+    let fetched = fetch_to_file_with(
         &format!("{}/repos/{owner}/{name}/zipball/{}", github_api(), head.0),
         &zip,
+        ctl,
+        "Downloading the repository",
     );
     let unpacked = fetched.map_err(github_err).and_then(|_| {
         let _ = fs::remove_dir_all(dest);
@@ -638,12 +809,19 @@ fn checksum_for(sums: &str, asset: &str) -> Option<String> {
 }
 
 /// Download `base/asset` to `dest`, checked against the hash `sums_url` gives.
-fn fetch_checked(base: &str, asset: &str, sums_url: &str, dest: &Path) -> Result<()> {
+fn fetch_checked(
+    base: &str,
+    asset: &str,
+    sums_url: &str,
+    dest: &Path,
+    ctl: &dyn ImportControl,
+    stage: &str,
+) -> Result<()> {
     let checked = (|| -> Result<()> {
         let (sums, _) = fetch_text(sums_url)?;
         let want =
             checksum_for(&sums, asset).ok_or_else(|| other(format!("the published checksums do not list {asset}")))?;
-        let (got, _) = fetch_to_file(&format!("{base}/{asset}"), dest)?;
+        let (got, _) = fetch_to_file_with(&format!("{base}/{asset}"), dest, ctl, stage)?;
         if got != want {
             return Err(other(format!(
                 "the {asset} download did not match its published checksum"
@@ -701,7 +879,7 @@ fn own_tools_dir() -> Result<PathBuf> {
 }
 
 /// Download the newest yt-dlp from its GitHub releases into `tools_dir()`.
-pub fn install_yt_dlp() -> Result<PathBuf> {
+fn install_yt_dlp(ctl: &dyn ImportControl) -> Result<PathBuf> {
     let asset = yt_dlp_asset().ok_or_else(|| other("Video import works in the desktop app, not on this device."))?;
     let base = release_url(
         "GRAPHITE_YT_DLP_URL",
@@ -710,14 +888,21 @@ pub fn install_yt_dlp() -> Result<PathBuf> {
     let dir = own_tools_dir()?;
     let dest = dir.join(exe("yt-dlp"));
     let part = dir.join(format!("{}.part", exe("yt-dlp")));
-    fetch_checked(&base, asset, &format!("{base}/SHA2-256SUMS"), &part)?;
+    fetch_checked(
+        &base,
+        asset,
+        &format!("{base}/SHA2-256SUMS"),
+        &part,
+        ctl,
+        "Downloading yt-dlp",
+    )?;
     install_program(&part, &dest)?;
     refresh_tools();
     Ok(dest)
 }
 
 /// Download Deno, which yt-dlp needs to read YouTube's player code.
-pub fn install_deno() -> Result<PathBuf> {
+fn install_deno(ctl: &dyn ImportControl) -> Result<PathBuf> {
     let asset = deno_asset().ok_or_else(|| other("Deno has no build for this device"))?;
     let base = release_url(
         "GRAPHITE_DENO_URL",
@@ -725,7 +910,14 @@ pub fn install_deno() -> Result<PathBuf> {
     );
     let dir = own_tools_dir()?;
     let zip = dir.join("deno.zip.part");
-    fetch_checked(&base, asset, &format!("{base}/{asset}.sha256sum"), &zip)?;
+    fetch_checked(
+        &base,
+        asset,
+        &format!("{base}/{asset}.sha256sum"),
+        &zip,
+        ctl,
+        "Downloading Deno",
+    )?;
     let unpacked = unzip_programs(&zip, &[exe("deno")], &dir);
     let _ = fs::remove_file(&zip);
     unpacked?;
@@ -734,7 +926,7 @@ pub fn install_deno() -> Result<PathBuf> {
 }
 
 /// Download ffmpeg and ffprobe (Windows only; see `ffmpeg_asset`).
-pub fn install_ffmpeg() -> Result<PathBuf> {
+fn install_ffmpeg(ctl: &dyn ImportControl) -> Result<PathBuf> {
     let asset = ffmpeg_asset().ok_or_else(|| other("Install ffmpeg with your system's package manager."))?;
     let base = release_url(
         "GRAPHITE_FFMPEG_URL",
@@ -742,7 +934,14 @@ pub fn install_ffmpeg() -> Result<PathBuf> {
     );
     let dir = own_tools_dir()?;
     let zip = dir.join("ffmpeg.zip.part");
-    fetch_checked(&base, asset, &format!("{base}/checksums.sha256"), &zip)?;
+    fetch_checked(
+        &base,
+        asset,
+        &format!("{base}/checksums.sha256"),
+        &zip,
+        ctl,
+        "Downloading ffmpeg",
+    )?;
     let unpacked = unzip_programs(&zip, &[exe("ffmpeg"), exe("ffprobe")], &dir);
     let _ = fs::remove_file(&zip);
     unpacked?;
@@ -768,17 +967,17 @@ pub fn missing_video_tools() -> Vec<&'static str> {
 
 /// Fetch the newest yt-dlp (YouTube changes often, and a fresh yt-dlp is the
 /// usual fix) plus Deno and ffmpeg where they are missing.
-pub fn install_video_tools() -> Result<Tools> {
+pub fn install_video_tools(ctl: &dyn ImportControl) -> Result<Tools> {
     let missing = missing_video_tools();
     let ours = tools_dir().map(|d| d.join(exe("yt-dlp"))).is_some_and(|p| p.is_file());
     if missing.contains(&"yt-dlp") || ours {
-        install_yt_dlp()?;
+        install_yt_dlp(ctl)?;
     }
     if missing.contains(&"deno") {
-        install_deno()?;
+        install_deno(ctl)?;
     }
     if missing.contains(&"ffmpeg") {
-        install_ffmpeg()?;
+        install_ffmpeg(ctl)?;
     }
     Ok(refresh_tools())
 }
@@ -804,11 +1003,50 @@ fn yt_dlp_args() -> Vec<String> {
 fn run_yt_dlp(extra: &[&str]) -> std::result::Result<String, String> {
     let base = yt_dlp_args();
     let args: Vec<&str> = base.iter().map(String::as_str).chain(extra.iter().copied()).collect();
-    run("yt-dlp", &args, None).map_err(|e| {
-        // "yt-dlp --no-playlist: ERROR: [youtube] …" → "yt-dlp: [youtube] …"
-        let msg = e.split_once(": ").map_or(e.as_str(), |(_, m)| m);
-        format!("yt-dlp: {}", msg.trim_start_matches("ERROR: "))
+    run("yt-dlp", &args, None).map_err(|e| tidy_yt_dlp_error(&e))
+}
+
+/// Run yt-dlp for a download, turning its progress lines into reports.
+fn run_yt_dlp_watched(extra: &[&str], ctl: &dyn ImportControl) -> std::result::Result<String, String> {
+    const TAG: &str = "GRAPHITE-PROGRESS ";
+    let template = format!(
+        "download:{TAG}%(progress.downloaded_bytes)s %(progress.total_bytes)s %(progress.total_bytes_estimate)s %(info.vcodec)s"
+    );
+    let base = yt_dlp_args();
+    let args: Vec<&str> = base
+        .iter()
+        .map(String::as_str)
+        .chain(["--newline", "--progress", "--progress-template", &template])
+        .chain(extra.iter().copied())
+        .collect();
+    ctl.progress("Downloading the video", 0, None);
+    run_watched("yt-dlp", &args, None, ctl, |line| {
+        if let Some((done, total, stage)) = line.strip_prefix(TAG).and_then(parse_yt_dlp_progress) {
+            ctl.progress(stage, done, total);
+        }
     })
+    .map_err(|e| if e == CANCELLED { e } else { tidy_yt_dlp_error(&e) })
+}
+
+/// `downloaded total estimate vcodec` from the progress template; yt-dlp
+/// writes `NA` for what it does not know.
+fn parse_yt_dlp_progress(line: &str) -> Option<(u64, Option<u64>, &'static str)> {
+    let mut parts = line.split_whitespace();
+    let done = parts.next()?.parse::<f64>().ok()? as u64;
+    let num = |p: Option<&str>| p.and_then(|v| v.parse::<f64>().ok()).map(|v| v as u64);
+    let (total, estimate) = (num(parts.next()), num(parts.next()));
+    let stage = if parts.next() == Some("none") {
+        "Downloading the sound"
+    } else {
+        "Downloading the video"
+    };
+    Some((done, total.or(estimate), stage))
+}
+
+/// "yt-dlp --no-playlist: ERROR: [youtube] …" → "yt-dlp: [youtube] …"
+fn tidy_yt_dlp_error(e: &str) -> String {
+    let msg = e.split_once(": ").map_or(e, |(_, m)| m);
+    format!("yt-dlp: {}", msg.trim_start_matches("ERROR: "))
 }
 
 /// Everything yt-dlp knows about a video, without downloading it.
@@ -1302,15 +1540,20 @@ enum Fetched {
 impl PendingImport {
     /// Download the source into its folder. Touches only that folder.
     pub fn fetch(&mut self) -> Result<()> {
+        self.fetch_with(&Unwatched)
+    }
+
+    /// `fetch`, reporting progress to `ctl` and stopping when it says so.
+    pub fn fetch_with(&mut self, ctl: &dyn ImportControl) -> Result<()> {
         let url = self.url.as_str();
         let (folder, dir) = (self.folder.as_str(), self.dir.as_path());
         let fetched = match self.kind {
             SourceKind::Github | SourceKind::Git => {
                 let repo = dir.join(CHECKOUT_DIR);
                 let (commit, committed, subject) = if tools().git {
-                    git_checkout(url, &repo)?
+                    git_checkout(url, &repo, ctl)?
                 } else if let Some((owner, name)) = github_repo(url) {
-                    github_download(&owner, &name, &repo)?
+                    github_download(&owner, &name, &repo, ctl)?
                 } else {
                     return Err(other(
                         "git is not installed. It is needed for repositories outside GitHub.",
@@ -1324,14 +1567,19 @@ impl PendingImport {
                 }
             }
             SourceKind::Page => {
-                let (html, _) = fetch_text(url)?;
+                let (html, _) = fetch_text_with(url, ctl, "Downloading the page")?;
                 let page = extract_page(url, &html);
                 fs::write(dir.join("page.html"), &html)?;
                 let mut files = vec![format!("{folder}/page.html")];
                 // Images: download what the readable text references, rewrite to local paths.
                 let mut markdown = page.markdown.clone();
                 let img_dir = dir.join("images");
+                let image_count = page.images.len().min(MAX_PAGE_IMAGES);
                 for (i, img) in page.images.iter().take(MAX_PAGE_IMAGES).enumerate() {
+                    if ctl.cancelled() {
+                        return Err(cancelled());
+                    }
+                    ctl.progress(&format!("Downloading image {} of {image_count}", i + 1), 0, None);
                     let name = image_name(img, i);
                     let dest = img_dir.join(&name);
                     if dest.is_file() || fetch_to_file(img, &dest).is_ok() {
@@ -1341,7 +1589,13 @@ impl PendingImport {
                     }
                 }
                 let shot = dir.join("screenshot.png");
-                let has_shot = shot.is_file() || screenshot(url, &shot);
+                if !shot.is_file() && !ctl.cancelled() {
+                    ctl.progress("Taking a screenshot", 0, None);
+                }
+                let has_shot = shot.is_file() || (!ctl.cancelled() && screenshot(url, &shot));
+                if ctl.cancelled() {
+                    return Err(cancelled());
+                }
                 if has_shot {
                     files.push(format!("{folder}/screenshot.png"));
                 }
@@ -1350,7 +1604,7 @@ impl PendingImport {
                     description: page.description,
                     markdown,
                     hash: sha256_str(&page.markdown),
-                    image_count: page.images.len().min(MAX_PAGE_IMAGES),
+                    image_count,
                     has_shot,
                     files,
                 }
@@ -1365,7 +1619,11 @@ impl PendingImport {
                 }
                 // Ask what the site offers first, then download one of those,
                 // instead of a format pattern the site may not match.
+                ctl.progress("Reading the video's formats", 0, None);
                 let info = video_info(url)?;
+                if ctl.cancelled() {
+                    return Err(cancelled());
+                }
                 let format = match choose_format(&info, tools().ffmpeg) {
                     FormatChoice::Use(f) => f,
                     FormatChoice::NeedsFfmpeg => {
@@ -1396,7 +1654,7 @@ impl PendingImport {
                     args.extend(["--merge-output-format", "mp4", "--convert-thumbnails", "jpg"]);
                 }
                 args.extend(["--load-info-json", &probe_arg]);
-                let ran = run_yt_dlp(&args);
+                let ran = run_yt_dlp_watched(&args, ctl);
                 let _ = fs::remove_file(&probe);
                 ran.map_err(other)?;
                 // Find what it wrote.
@@ -1440,7 +1698,7 @@ impl PendingImport {
                     name = format!("{}.pdf", name.trim_end_matches('.'));
                 }
                 let tmp = dir.join("download.part");
-                let (hash, disposition) = fetch_to_file(&fetch_url, &tmp)?;
+                let (hash, disposition) = fetch_to_file_with(&fetch_url, &tmp, ctl, "Downloading the file")?;
                 if let Some(d) = disposition {
                     let d = safe_attachment_name(&d);
                     if d != "file" && d.contains('.') {
@@ -1473,6 +1731,11 @@ impl PendingImport {
     /// The source note's title when the import started.
     pub fn title(&self) -> &str {
         &self.title
+    }
+
+    /// Which importer runs.
+    pub fn kind(&self) -> SourceKind {
+        self.kind
     }
 }
 
@@ -2173,10 +2436,10 @@ mod tests {
     fn serve(body: Arc<Mutex<(String, String)>>) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
-        std::thread::spawn(move || {
+        thread::spawn(move || {
             for stream in listener.incoming().flatten() {
                 let body = body.clone();
-                std::thread::spawn(move || {
+                thread::spawn(move || {
                     let mut reader = BufReader::new(stream.try_clone().unwrap());
                     let mut line = String::new();
                     reader.read_line(&mut line).unwrap();
@@ -2355,10 +2618,10 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let route = Arc::new(route);
-        std::thread::spawn(move || {
+        thread::spawn(move || {
             for stream in listener.incoming().flatten() {
                 let route = route.clone();
-                std::thread::spawn(move || {
+                thread::spawn(move || {
                     let mut reader = BufReader::new(stream.try_clone().unwrap());
                     let mut line = String::new();
                     reader.read_line(&mut line).unwrap();
@@ -2416,7 +2679,7 @@ mod tests {
         assert_eq!(github_repo("https://gitlab.com/acme/widget"), None);
         let dir = tempfile::tempdir().unwrap();
         let repo = dir.path().join("repo");
-        let (commit, date, subject) = github_download("acme", "widget", &repo).unwrap();
+        let (commit, date, subject) = github_download("acme", "widget", &repo, &Unwatched).unwrap();
         assert_eq!(commit, sha);
         assert_eq!(date, "2026-10-01T10:00:00Z");
         assert_eq!(subject, "Add gears");
@@ -2427,7 +2690,7 @@ mod tests {
         assert!(repo.join("src/lib.rs").is_file());
         assert!(!dir.path().join("repo.zip.part").exists(), "the archive is removed");
         assert_eq!(github_head("acme", "widget").unwrap().0, sha);
-        let missing = github_download("acme", "nothing", &dir.path().join("x")).unwrap_err();
+        let missing = github_download("acme", "nothing", &dir.path().join("x"), &Unwatched).unwrap_err();
         assert!(missing.to_string().contains("no public repository"), "{missing}");
     }
 
@@ -2456,12 +2719,12 @@ mod tests {
         std::env::set_var("GRAPHITE_YT_DLP_URL", &base);
 
         *sums.lock().unwrap() = format!("{}  {asset}\n", "f".repeat(64));
-        let bad = install_yt_dlp().unwrap_err();
+        let bad = install_yt_dlp(&Unwatched).unwrap_err();
         assert!(bad.to_string().contains("checksum"), "{bad}");
         assert_eq!(fs::read_dir(tools_home.path()).unwrap().count(), 0, "nothing kept");
 
         *sums.lock().unwrap() = format!("{good}  {asset}\n");
-        let path = install_yt_dlp().unwrap();
+        let path = install_yt_dlp(&Unwatched).unwrap();
         assert!(path.starts_with(tools_home.path()));
         assert_eq!(find_tool("yt-dlp").as_deref(), Some(path.as_path()));
         #[cfg(unix)]
@@ -2492,6 +2755,29 @@ mod tests {
         assert!(v.sources().unwrap().is_empty());
         assert!(!dir.path().join(folder).exists());
     }
+
+    #[test]
+    fn cancel_stops_a_download_the_server_never_answers() {
+        // Accepts the connection and then says nothing.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        thread::spawn(move || {
+            let _held: Vec<_> = listener.incoming().take(1).collect();
+            thread::sleep(Duration::from_secs(30));
+        });
+        struct CancelSoon(std::time::Instant);
+        impl ImportControl for CancelSoon {
+            fn progress(&self, _: &str, _: u64, _: Option<u64>) {}
+            fn cancelled(&self) -> bool {
+                self.0.elapsed() > Duration::from_millis(300)
+            }
+        }
+        let start = std::time::Instant::now();
+        let err = fetch_text_with(&format!("http://{addr}/"), &CancelSoon(start), "").unwrap_err();
+        assert_eq!(err.to_string(), CANCELLED);
+        assert!(start.elapsed() < Duration::from_secs(5));
+    }
+
     /// yt-dlp's format list for a YouTube video, cut down to what matters.
     fn formats(list: &[(&str, &str, &str, u64, &str, f64)]) -> Value {
         json!({
@@ -2595,7 +2881,7 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         std::env::set_var("GRAPHITE_TOOLS_DIR", home.path());
         std::env::set_var("GRAPHITE_DENO_URL", &base);
-        let path = install_deno().unwrap();
+        let path = install_deno(&Unwatched).unwrap();
         assert_eq!(path, home.path().join(exe("deno")));
         assert_eq!(find_tool("deno").as_deref(), Some(path.as_path()));
         assert!(yt_dlp_args().contains(&format!("deno:{}", plain_path(&path))));
