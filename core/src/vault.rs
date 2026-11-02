@@ -33,6 +33,14 @@ pub struct VaultInfo {
     pub asset_count: usize,
 }
 
+/// A note, or a part of one, as a link or an embed shows it (see `Vault::read_section`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Section {
+    pub note: NoteSummary,
+    pub anchor: Option<String>,
+    pub markdown: Option<String>,
+}
+
 pub struct Vault {
     root: PathBuf,
     pub(crate) index: Index,
@@ -347,6 +355,26 @@ impl Vault {
     /// Resolve a link target to a note id, creating the note if asked.
     pub fn resolve(&self, target: &str) -> Result<Option<String>> {
         self.index.resolve(target)
+    }
+
+    /// What a link such as `[[Title#Heading]]` or `![[Title#^id]]` shows:
+    /// the note it resolves to and the Markdown of the whole note or of the
+    /// heading's section or block. `None` when the note does not exist; the
+    /// `markdown` is `None` when the note exists but the anchor does not.
+    pub fn read_section(&self, target: &str, anchor: Option<&str>) -> Result<Option<Section>> {
+        let Some(id) = self.resolve(target)? else {
+            return Ok(None);
+        };
+        let note = self.read(&id)?;
+        let markdown = match anchor.map(str::trim).filter(|a| !a.is_empty()) {
+            Some(a) => crate::sections::section(&note.body, a),
+            None => Some(note.body.clone()),
+        };
+        Ok(Some(Section {
+            note: note.summary(),
+            anchor: anchor.map(str::to_string),
+            markdown,
+        }))
     }
 
     pub fn resolve_or_create(&mut self, target: &str) -> Result<String> {

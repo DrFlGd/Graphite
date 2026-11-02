@@ -34,6 +34,13 @@ export interface Shared {
   files: string[]
 }
 
+/** What a link or an embed shows (core `Section`): `markdown` is null when the heading or block is missing. */
+export interface Section {
+  note: NoteSummary
+  anchor: string | null
+  markdown: string | null
+}
+
 export interface SearchHit {
   id: string
   path: string
@@ -356,6 +363,8 @@ export const api = {
   unlinkedMentions: (id: string) => invoke<NoteSummary[]>('unlinked_mentions', { id }),
   outgoingLinks: (id: string) => invoke<Outgoing[]>('outgoing_links', { id }),
   followLink: (target: string) => invoke<string>('follow_link', { target }),
+  /** The note a link points at and the Markdown of the whole note, or of its heading section or `^block`. */
+  readSection: (target: string, anchor?: string | null) => invoke<Section | null>('read_section', { target, anchor: anchor ?? null }),
   graph: () => invoke<Graph>('graph'),
   localGraph: (id: string, hops = 1) => invoke<Graph>('local_graph', { id, hops }),
   items: (filter: ItemFilter) => invoke<ItemRow[]>('items', { filter }),

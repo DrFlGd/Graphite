@@ -12,6 +12,7 @@ import { SlashMenu } from './extensions/SlashMenu'
 import { NoteLinkSuggest, type NoteCandidate } from './extensions/NoteLinkSuggest'
 import { DuplicateTitle } from './extensions/DuplicateTitle'
 import { InlineFields } from './extensions/InlineFields'
+import { BlockIds } from './anchors'
 
 export interface EditorExtensionOptions {
   placeholder?: string
@@ -38,7 +39,7 @@ export function buildExtensions(opts: EditorExtensionOptions = {}): AnyExtension
     }),
     Markdown,
     Highlight,
-    WikiLink,
+    WikiLink.configure({ context: opts.blockContext ?? {}, resolveSrc: opts.resolveSrc }),
     VaultImage.configure({ resolveSrc: opts.resolveSrc, inline: false, allowBase64: false }),
     FileEmbed.configure({ resolveSrc: opts.resolveSrc }),
     ...blockExtensions().filter((e) => e.name !== 'fileEmbed'),
@@ -51,6 +52,7 @@ export function buildExtensions(opts: EditorExtensionOptions = {}): AnyExtension
     NoteLinkSuggest.configure({ search: opts.searchNotes ?? (async () => []) }),
     DuplicateTitle.configure({ title: opts.title ?? (() => undefined) }),
     InlineFields,
+    BlockIds,
   ]
 }
 

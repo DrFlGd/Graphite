@@ -69,10 +69,11 @@ A file with no front-matter is a valid note (title = file name, type = note); it
 | Syntax | Meaning |
 | --- | --- |
 | `[[Title]]` | Link to the note whose title, alias, or file stem matches (case-insensitive). Title match wins, then alias, then path. |
-| `[[Title#Heading]]` | Link to a heading inside the note. |
+| `[[Title#Heading]]` | Link to a heading inside the note. Nested headings may be spelled out (`[[Title#Parts#Motors]]`); the last part is the heading. `[[#Heading]]` points into the same note. |
+| `[[Title#^id]]` | Link to a block: a paragraph or list item whose last line ends with ` ^id` (letters, digits and `-`), or the block (table, quote, code) just above a line holding only `^id`. A list item's block includes the items nested under it. The app's "Copy link to this heading or paragraph" adds a random six-character id when the block has none. |
 | `[[Title\|Display text]]` | Link shown with different text. |
 | `[[folder/Title]]` | Disambiguate by path when two notes share a title. |
-| `![[file.png]]`, `![[Title]]` | Embed an asset or a note (M3). |
+| `![[file.png]]`, `![[Title]]`, `![[Title#Heading]]`, `![[Title#^id]]` | Embed an asset, a note, a heading's section (down to the next heading of the same or a higher level) or a block. Embedded notes are shown read-only in place, two levels deep at most. |
 | `relation:: [[Title]]` | Typed link. An inline field at the start of a line (or list item) types every link on that line. Common relations: `depends-on`, `derived-from`, `references`, `contradicts`, `part-of`, `source`, `blocks`. |
 | `key: "[[Title]]"` in front-matter | Typed link from a property: a string (or list of strings) holding wiki links links the note, with the key as the relation, e.g. `project: "[[Garden Robot]]"`. |
 | `[text](https://…)` | Ordinary web link, not indexed as a note link. |

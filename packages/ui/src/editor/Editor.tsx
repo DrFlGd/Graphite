@@ -7,6 +7,8 @@ import type { BlockContext } from './blocks'
 import type { NoteCandidate } from './extensions/NoteLinkSuggest'
 import { Toolbar } from './Toolbar'
 import { TableControls } from './TableControls'
+import { LinkPreview } from './LinkPreview'
+import { scrollToAnchor } from './anchors'
 
 export interface NoteEditorProps {
   /** Markdown body. When this changes from outside (file watcher, switching notes) the editor reloads. */
@@ -26,6 +28,8 @@ export interface NoteEditorProps {
   editable?: boolean
   /** The note's title shown above the editor; a first `# heading` repeating it is hidden. */
   title?: string
+  /** Scroll to a heading or `^block` (what follows `#` in a link); a new `seq` scrolls again. */
+  scrollTo?: { anchor: string; seq: number } | null
   /** Show the formatting toolbar (default true). Read-only views usually hide it. */
   toolbar?: boolean
   /** Rendered at the right end of the toolbar. */
@@ -47,7 +51,7 @@ export interface NoteEditorProps {
  * out (ADR-005).
  */
 export function NoteEditor(props: NoteEditorProps) {
-  const { markdown, docKey, onChange, onFollowLink, onOpenFile, onOpenUrl, searchNotes, resolveSrc, blockContext, placeholder, editable = true, title, toolbar = true, toolbarTrailing, autofocus, onReady, onFiles } = props
+  const { markdown, docKey, onChange, onFollowLink, onOpenFile, onOpenUrl, searchNotes, resolveSrc, blockContext, placeholder, editable = true, title, scrollTo, toolbar = true, toolbarTrailing, autofocus, onReady, onFiles } = props
   const lastEmitted = useRef<string>(markdown)
   /**
    * The editor's own serialisation of the text it last loaded. Parsing and
@@ -58,9 +62,23 @@ export function NoteEditor(props: NoteEditorProps) {
   const loaded = useRef<{ markdown: string | null; edited: boolean }>({ markdown: null, edited: false })
   const titleRef = useRef(title)
   titleRef.current = title
-  const context = useMemo<BlockContext>(() => blockContext ?? {}, [blockContext])
   const callbacks = useRef({ onChange, onFollowLink, onOpenFile, onOpenUrl, searchNotes, onReady, onFiles })
   callbacks.current = { onChange, onFollowLink, onOpenFile, onOpenUrl, searchNotes, onReady, onFiles }
+  // One context per document that always calls the host's latest callbacks, so
+  // embeds and previews do not reload whenever the host re-renders.
+  const contextRef = useRef(blockContext)
+  contextRef.current = blockContext
+  const context = useMemo<BlockContext>(() => {
+    const c = contextRef.current ?? {}
+    return {
+      pickImage: c.pickImage && (() => contextRef.current?.pickImage?.() ?? Promise.resolve(null)),
+      pickFile: c.pickFile && (() => contextRef.current?.pickFile?.() ?? Promise.resolve(null)),
+      loadSection: c.loadSection && ((t: string, a: string | null) => contextRef.current?.loadSection?.(t, a) ?? Promise.resolve(null)),
+      followLink: (t: string, a: string | null) => (contextRef.current?.followLink ?? callbacks.current.onFollowLink)?.(t, a),
+      embedDepth: c.embedDepth,
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [docKey])
 
   const extensions = useMemo(
     () =>
@@ -85,9 +103,16 @@ export function NoteEditor(props: NoteEditorProps) {
       autofocus: autofocus ? 'end' : false,
       editorProps: {
         attributes: { class: 'gr-prose', spellcheck: 'true' },
-        handleClickOn: (_view, _pos, node, _nodePos, event) => {
+        handleClickOn: (view, _pos, node, _nodePos, event) => {
           if (node.type.name === 'wikiLink' && !(event as MouseEvent).shiftKey) {
-            callbacks.current.onFollowLink?.(node.attrs.target as string, (node.attrs.heading as string | null) ?? null)
+            const heading = (node.attrs.heading as string | null) ?? null
+            // `[[#Heading]]` points into this note.
+            if (!node.attrs.target && heading) {
+              const ed = (view.dom as HTMLElement & { editor?: Editor }).editor
+              if (ed) scrollToAnchor(ed, heading)
+              return true
+            }
+            callbacks.current.onFollowLink?.(node.attrs.target as string, heading)
             return true
           }
           if (node.type.name === 'fileEmbed' && (event.target as HTMLElement | null)?.closest?.('[data-file-open]')) {
@@ -174,12 +199,21 @@ export function NoteEditor(props: NoteEditorProps) {
     if (editor && !editor.isDestroyed) callbacks.current.onReady?.(editor)
   }, [editor])
 
+  useEffect(() => {
+    if (!editor || editor.isDestroyed || !scrollTo?.anchor) return
+    const raf = window.requestAnimationFrame(() => {
+      if (!editor.isDestroyed) scrollToAnchor(editor, scrollTo.anchor)
+    })
+    return () => window.cancelAnimationFrame(raf)
+  }, [editor, scrollTo?.anchor, scrollTo?.seq])
+
   if (!editor) return null
   return (
     <div className="gr-editor">
       {toolbar && <Toolbar editor={editor} context={context} trailing={toolbarTrailing} />}
       {toolbar && <TableControls editor={editor} />}
       <EditorContent editor={editor} className="gr-editor__content" />
+      {context.loadSection && (context.embedDepth ?? 0) === 0 && <LinkPreview editor={editor} context={context} resolveSrc={resolveSrc} />}
     </div>
   )
 }

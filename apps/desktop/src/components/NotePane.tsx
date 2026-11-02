@@ -5,12 +5,15 @@ import { api, type Note } from '../api'
 import { SourceBar } from './SourceBar'
 import { TypeChip, datedDailyTitle } from '../noteTypes'
 import { HistoryPanel } from './HistoryPanel'
+import { loadSection } from '../sections'
 
 interface Props {
   note: Note
   saveState: 'saved' | 'dirty' | 'saving'
   onChange: (note: Note) => void
-  onFollowLink: (target: string) => void
+  onFollowLink: (target: string, anchor?: string | null) => void
+  /** Scroll to a heading or block once the note is shown. */
+  jump?: { anchor: string; seq: number } | null
   onOpenFile: (src: string) => void
   onOpenUrl: (href: string) => void
   onDelete: () => void
@@ -24,7 +27,7 @@ interface Props {
   onError?: (e: string) => void
 }
 
-export function NotePane({ note, saveState, onChange, onFollowLink, onOpenFile, onOpenUrl, onDelete, resolveSrc, pickImage, pickFile, onEditorReady, onFiles, onReplace, onError }: Props) {
+export function NotePane({ note, saveState, onChange, onFollowLink, jump, onOpenFile, onOpenUrl, onDelete, resolveSrc, pickImage, pickFile, onEditorReady, onFiles, onReplace, onError }: Props) {
   const [raw, setRaw] = useState(false)
   const [history, setHistory] = useState(false)
 
@@ -73,12 +76,13 @@ export function NotePane({ note, saveState, onChange, onFollowLink, onOpenFile, 
           markdown={note.body}
           title={note.title}
           onChange={(body) => onChange({ ...note, body })}
-          onFollowLink={(target) => onFollowLink(target)}
+          onFollowLink={(target, anchor) => onFollowLink(target, anchor)}
+          scrollTo={jump}
           onOpenFile={onOpenFile}
           onOpenUrl={onOpenUrl}
           searchNotes={searchNotes}
           resolveSrc={resolveSrc}
-          blockContext={{ pickImage, pickFile }}
+          blockContext={{ pickImage, pickFile, loadSection, followLink: (t, a) => onFollowLink(t, a) }}
           onReady={onEditorReady}
           onFiles={onFiles}
           autofocus

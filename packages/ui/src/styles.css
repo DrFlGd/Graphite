@@ -225,3 +225,29 @@
 .gr-footnote-def__label::after { content: "."; }
 .gr-footnote-def__text { flex: 1; min-width: 0; color: var(--gr-fg); }
 .is-flash { background: var(--gr-accent-bg) !important; }
+
+/* Block ids: ` ^abc123` at the end of a paragraph */
+.gr-prose .gr-block-id { font-size: 0.72em; color: var(--gr-fg-muted); font-family: var(--gr-mono); opacity: 0.7; }
+
+/* Embedded notes and sections: ![[Note#Heading]] */
+.gr-embed-host { display: block; }
+.gr-embed { display: block; margin: 0.6em 0; border: 1px solid var(--gr-border); border-left: 3px solid var(--gr-accent); border-radius: 0 var(--gr-radius) var(--gr-radius) 0; background: var(--gr-bg-elev); overflow: hidden; }
+.gr-embed.is-selected { outline: 2px solid var(--gr-accent); }
+.gr-embed__head { display: flex; align-items: center; gap: 6px; width: 100%; border: 0; border-bottom: 1px solid var(--gr-border); background: var(--gr-bg-subtle); color: var(--gr-link); font: 600 13px var(--gr-font); padding: 5px 10px; cursor: pointer; text-align: left; }
+.gr-embed__head:hover .gr-embed__title { text-decoration: underline; }
+.gr-embed__title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gr-embed__body { display: block; padding: 4px 14px 8px; max-height: 480px; overflow: auto; }
+.gr-embed__note { display: block; color: var(--gr-fg-muted); font-size: 0.9em; padding: 4px 0; margin: 0; }
+.gr-markdown-view .gr-editor { height: auto; }
+.gr-markdown-view .gr-editor__content { padding: 0; overflow: visible; }
+.gr-markdown-view .gr-prose { max-width: none; font-size: 0.95em; }
+.gr-markdown-view .gr-prose > :first-child { margin-top: 0.3em; }
+/* The editor keeps an empty paragraph at the end for typing; a read-only view does not need it. */
+.gr-markdown-view .gr-prose > p:last-child:has(> br.ProseMirror-trailingBreak:only-child) { display: none; }
+
+/* Link hover preview */
+.gr-preview { position: fixed; z-index: 70; max-height: 380px; display: flex; flex-direction: column; background: var(--gr-bg-elev); border: 1px solid var(--gr-border); border-radius: 8px; box-shadow: var(--gr-shadow); font-family: var(--gr-font); overflow: hidden; }
+.gr-preview__head { flex: none; text-align: left; border: 0; border-bottom: 1px solid var(--gr-border); background: var(--gr-bg-subtle); color: var(--gr-link); font: 600 13px var(--gr-font); padding: 6px 12px; cursor: pointer; }
+.gr-preview__head:hover { text-decoration: underline; }
+.gr-preview__anchor { color: var(--gr-fg-muted); font-weight: 500; }
+.gr-preview__body { overflow: auto; padding: 4px 14px 10px; }

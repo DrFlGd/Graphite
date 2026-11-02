@@ -609,6 +609,15 @@ fn follow_link(state: State<AppState>, target: String) -> CmdResult<String> {
 }
 
 #[tauri::command]
+fn read_section(
+    state: State<AppState>,
+    target: String,
+    anchor: Option<String>,
+) -> CmdResult<Option<graphite_core::Section>> {
+    with_vault(&state, |v| v.read_section(&target, anchor.as_deref()))
+}
+
+#[tauri::command]
 fn complete_title(state: State<AppState>, prefix: String) -> CmdResult<Vec<NoteSummary>> {
     with_vault(&state, |v| v.complete_title(&prefix, 12))
 }
@@ -1046,6 +1055,7 @@ pub fn run() {
             graph,
             local_graph,
             follow_link,
+            read_section,
             complete_title,
             rebuild_index,
             assets,

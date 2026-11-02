@@ -18,6 +18,7 @@ pub mod note;
 pub mod project;
 pub mod query;
 pub mod relay;
+pub mod sections;
 pub mod snapshot;
 pub mod sources;
 pub mod sync;
@@ -47,5 +48,5 @@ pub use sources::{
 pub use sync::{content_hash, SyncDevice, SyncReport, SyncStatus};
 pub use tasks::{Item, ItemKind, ItemStatus, Progress};
 pub use templates::Template;
-pub use vault::{is_conflict_copy, is_source_checkout, Vault, VaultInfo};
+pub use vault::{is_conflict_copy, is_source_checkout, Section, Vault, VaultInfo};
 pub use watcher::{is_sync_document, VaultEvent, Watcher};

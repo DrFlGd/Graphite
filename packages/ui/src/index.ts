@@ -1,5 +1,7 @@
 export { NoteEditor, type NoteEditorProps } from './editor/Editor'
-export { BLOCKS, blockById, filterBlocks, blockExtensions, type BlockDef, type BlockContext } from './editor/blocks'
+export { BLOCKS, blockById, filterBlocks, blockExtensions, type BlockDef, type BlockContext, type SectionPreview } from './editor/blocks'
+export { findAnchor, scrollToAnchor, linkToCursor, blockIdOf, newBlockId } from './editor/anchors'
+export { MarkdownView } from './editor/MarkdownView'
 export { buildExtensions, buildMarkdownExtensions } from './editor/extensions'
 export { markdownToDoc, docToMarkdown, roundTrip } from './editor/markdown'
 export { WikiLink, parseWikiInner, wikiLinkToMarkdown } from './editor/extensions/WikiLink'

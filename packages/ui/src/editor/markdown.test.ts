@@ -38,6 +38,9 @@ const CASES: Record<string, string> = {
   calloutNoTitle: '> [!note]\n> Just a note.',
   calloutNested: '> [!question] Why?\n> > [!info] Because\n> > It was cheaper.',
   escapedDollars: 'Not maths: \\$x$ stays text',
+  blockId: 'Battery is 12 V. ^battery\n\n- wheels ^wheels',
+  blockLink: 'See [[Garden Robot#^battery]] and [[#Power]].',
+  sectionEmbed: '![[Garden Robot#Power]]\n\n![[Garden Robot#^battery]]',
   footnotes: 'A claim[^1] and another[^src].\n\n[^1]: The first source.\n[^src]: A named one with [[Garden Robot]].',
 }
 

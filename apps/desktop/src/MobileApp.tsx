@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, CheckSquare, Inbox, ListChecks, Pencil, Plus, RefreshCw, Search, Settings2, SquareKanban } from 'lucide-react'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { NoteEditor, type BlockContext, type NoteCandidate } from '@graphite/ui'
+import { loadSection } from './sections'
 import { api, assetUrl, type Note, type NoteSummary, type SearchHit, type SyncStatus, type VaultInfo } from './api'
 import { InboxView } from './components/InboxView'
 import { TasksView } from './components/TasksView'
@@ -228,12 +229,14 @@ export function MobileApp() {
 
   const resolveSrc = useCallback((src: string) => (vault ? assetUrl(vault.root, src) : src), [vault])
 
+  const [jump, setJump] = useState<{ anchor: string; seq: number } | null>(null)
   const followLink = useCallback(
-    async (target: string) => {
+    async (target: string, anchor?: string | null) => {
       try {
         const id = await api.followLink(target)
         await refreshList()
         await openNote(id)
+        if (anchor) setJump((j) => ({ anchor, seq: (j?.seq ?? 0) + 1 }))
       } catch (e) {
         setError(String(e))
       }
@@ -241,6 +244,8 @@ export function MobileApp() {
     [openNote, refreshList],
   )
 
+  const followLinkRef = useRef(followLink)
+  followLinkRef.current = followLink
   // Inserting an image or file while editing: the picked file is copied into the vault.
   const blockContext = useMemo<BlockContext>(
     () => ({
@@ -263,6 +268,9 @@ export function MobileApp() {
           return null
         }
       },
+      // Embeds show the note in place; previews need a mouse, so there are none on the phone.
+      loadSection,
+      followLink: (t, anchor) => void followLinkRef.current(t, anchor),
     }),
     [],
   )
@@ -303,7 +311,7 @@ export function MobileApp() {
           </div>
         ) : (
           <div className="mobile__screen mobile__editor">
-            <NoteEditor markdown={open.body} docKey={open.id} title={open.title} onChange={onBodyChange} editable={editing} toolbar={editing} resolveSrc={resolveSrc} blockContext={blockContext} onFollowLink={(t) => void followLink(t)} onOpenUrl={(href) => void openUrl(href).catch((e) => setError(String(e)))} searchNotes={searchNotes} />
+            <NoteEditor markdown={open.body} docKey={open.id} title={open.title} onChange={onBodyChange} editable={editing} toolbar={editing} resolveSrc={resolveSrc} blockContext={blockContext} onFollowLink={(t, a) => void followLink(t, a)} scrollTo={jump} onOpenUrl={(href) => void openUrl(href).catch((e) => setError(String(e)))} searchNotes={searchNotes} />
           </div>
         )}
       </div>

@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
-import { Archive, ArrowUpRight, Settings2, CalendarDays, Columns2, Download, FilePlus2, FolderOpen, Inbox, LayoutTemplate, ListChecks, Locate, PanelLeft, PanelRight, Paperclip, RefreshCw, Search, SquareKanban, Trash2, Waypoints, X, Zap } from 'lucide-react'
-import { insertAttachments, type AttachmentItem, type Editor } from '@graphite/ui'
+import { Archive, ArrowUpRight, Settings2, CalendarDays, Columns2, Download, FilePlus2, FolderOpen, Inbox, LayoutTemplate, Link2, ListChecks, Locate, PanelLeft, PanelRight, Paperclip, RefreshCw, Search, SquareKanban, Trash2, Waypoints, X, Zap } from 'lucide-react'
+import { insertAttachments, linkToCursor, type AttachmentItem, type Editor } from '@graphite/ui'
 import { pickAndAttach } from './filePicker'
 import { api, assetUrl, decodePath, INBOX_DIR, type Note, type NoteSummary, type SyncStatus, type VaultInfo } from './api'
 import { Sidebar } from './components/Sidebar'
@@ -356,8 +356,10 @@ export function App() {
     [openNote, refreshList],
   )
 
+  /** A heading or block to scroll to once its note is open (from `[[Note#Heading]]`). */
+  const [jump, setJump] = useState<{ noteId: string; anchor: string; seq: number } | null>(null)
   const followLink = useCallback(
-    async (target: string) => {
+    async (target: string, anchor?: string | null) => {
       try {
         // `[[mount.stl]]` and `![[mount.stl]]` name a file: open it rather than creating a note.
         const name = target.split('/').pop() ?? target
@@ -371,6 +373,7 @@ export function App() {
         const id = await api.followLink(target)
         await refreshList()
         openNote(id)
+        if (anchor) setJump((j) => ({ noteId: id, anchor, seq: (j?.seq ?? 0) + 1 }))
       } catch (e) {
         setError(String(e))
       }
@@ -555,6 +558,25 @@ export function App() {
       { id: 'sync-settings', label: 'Sync settings', icon: <Settings2 size={16} />, keywords: 'relay devices invite large files', run: () => setSyncOpen(true) },
       { id: 'snapshot', label: 'Take a snapshot of the vault', icon: <Archive size={16} />, keywords: 'backup zip', run: () => void takeSnapshot() },
       { id: 'snapshots', label: 'Show snapshots folder', icon: <Archive size={16} />, keywords: 'backups zip', run: () => void api.revealSnapshots().catch((e) => setError(String(e))) },
+      ...(activeNote && !activeIsView
+        ? [
+            {
+              id: 'copy-block-link',
+              label: 'Copy link to this heading or paragraph',
+              icon: <Link2 size={16} />,
+              keywords: 'block reference anchor embed ^ section',
+              run: () => {
+                const ed = activeEditor.current
+                const link = ed && !ed.isDestroyed ? linkToCursor(ed, activeNote.title) : null
+                if (!link) return setNotice('Put the cursor in a heading or paragraph first')
+                void navigator.clipboard
+                  .writeText(link)
+                  .then(() => setNotice(`Copied ${link}. Paste it as a link, or put ! in front to embed it.`))
+                  .catch((e) => setError(String(e)))
+              },
+            },
+          ]
+        : []),
       ...(activeNote && !activeIsView ? [{ id: 'attach', label: 'Attach a file to this note…', icon: <Paperclip size={16} />, keywords: 'upload insert embed', run: () => void pickFile().then((f) => f && activeEditor.current && insertAttachments(activeEditor.current, [f])) }] : []),
       { id: 'query', label: 'New saved query', icon: <SquareKanban size={16} />, keywords: 'view list table board filter', run: () => void saveQuery('type:task status:open sort:due', 'list') },
       { id: 'graph', label: 'Show graph of the whole vault', shortcut: 'Ctrl+Shift+G', icon: <Waypoints size={16} />, keywords: 'links network', run: () => showGraph('global') },
@@ -597,7 +619,7 @@ export function App() {
               onFilesChanged={() => setAssetVersion((v) => v + 1)}
               onImport={(project) => setImporting({ project })}
               onOpen={openNote}
-              onFollowLink={(t) => void followLink(t)}
+              onFollowLink={(t, a) => void followLink(t, a)}
               onOpenUrl={openExternal}
               onChanged={() => void refreshList()}
               onError={setError}
@@ -624,7 +646,8 @@ export function App() {
               setSaved(n)
               void refreshList()
             }}
-            onFollowLink={(t) => void followLink(t)}
+            onFollowLink={(t, a) => void followLink(t, a)}
+            jump={jump}
             onOpenFile={(src) => openAsset(src)}
             onOpenUrl={openExternal}
             onDelete={(n) => void deleteNote(n)}
