@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, CheckSquare, Inbox, ListChecks, Pencil, Plus, RefreshCw, Search, Settings2, SquareKanban } from 'lucide-react'
+import { ArrowLeft, CheckSquare, Inbox, ListChecks, Pencil, Plus, RefreshCw, Search, Settings2, SquareKanban, Star } from 'lucide-react'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { NoteEditor, type BlockContext, type NoteCandidate } from '@graphite/ui'
 import { loadSection } from './sections'
@@ -13,6 +13,7 @@ import { pickAndAttach } from './filePicker'
 import { TypeIcon } from './noteTypes'
 import { syncSummary } from './components/sync'
 import { snippetText } from './snippet'
+import { snippetContext } from './insertSnippets'
 
 type Tab = 'inbox' | 'notes' | 'tasks' | 'projects'
 
@@ -188,6 +189,22 @@ export function MobileApp() {
     [open, flushSave],
   )
 
+  const toggleBookmark = useCallback(async () => {
+    if (!open) return
+    try {
+      await flushSave()
+      const cur = await api.readNote(open.id)
+      const properties = { ...cur.properties }
+      if (properties.bookmarked === true) delete properties.bookmarked
+      else properties.bookmarked = true
+      const saved = await api.saveNote({ ...cur, properties })
+      setOpen((o) => (o && o.id === saved.id ? { ...o, properties: saved.properties, updated: saved.updated } : o))
+      void refreshList()
+    } catch (e) {
+      setError(String(e))
+    }
+  }, [open, flushSave, refreshList])
+
   const closeNote = useCallback(async () => {
     await flushSave()
     setOpen(null)
@@ -246,6 +263,8 @@ export function MobileApp() {
 
   const followLinkRef = useRef(followLink)
   followLinkRef.current = followLink
+  const openTitleRef = useRef('')
+  openTitleRef.current = open?.title ?? ''
   // Inserting an image or file while editing: the picked file is copied into the vault.
   const blockContext = useMemo<BlockContext>(
     () => ({
@@ -271,11 +290,17 @@ export function MobileApp() {
       // Embeds show the note in place; previews need a mouse, so there are none on the phone.
       loadSection,
       followLink: (t, anchor) => void followLinkRef.current(t, anchor),
+      ...snippetContext(() => openTitleRef.current),
     }),
     [],
   )
 
-  const recent = useMemo(() => [...notes].sort((a, b) => (b.updated ?? '').localeCompare(a.updated ?? '')).slice(0, 50), [notes])
+  // Bookmarked notes first, then the most recently changed.
+  const recent = useMemo(() => {
+    const marked = notes.filter((n) => n.bookmarked).sort((a, b) => a.title.localeCompare(b.title))
+    const rest = notes.filter((n) => !n.bookmarked).sort((a, b) => (b.updated ?? '').localeCompare(a.updated ?? ''))
+    return [...marked, ...rest].slice(0, 50)
+  }, [notes])
   const projects = useMemo(() => notes.filter((n) => n.type === 'project').sort((a, b) => a.title.localeCompare(b.title)), [notes])
 
   if (!vault) {
@@ -295,6 +320,9 @@ export function MobileApp() {
             <ArrowLeft size={20} />
           </button>
           <span className="mobile__title">{open.title}</span>
+          <button type="button" className={`mobile__icon ${open.properties.bookmarked === true ? 'is-active' : ''}`} onClick={() => void toggleBookmark()} aria-label={open.properties.bookmarked === true ? 'Remove bookmark' : 'Bookmark'}>
+            <Star size={18} fill={open.properties.bookmarked === true ? 'currentColor' : 'none'} />
+          </button>
           {hub && !editing ? (
             <button type="button" className="mobile__icon" onClick={() => setHub(null)} aria-label="Show the note text">
               <Pencil size={18} />
@@ -329,8 +357,8 @@ export function MobileApp() {
       </div>
     )
   } else if (tab === 'notes') {
-    const typeOf = new Map(notes.map((n) => [n.id, n.type]))
-    const rows: { id: string; title: string; sub: string; type?: string }[] = hits ? hits.map((h) => ({ id: h.id, title: h.title, sub: snippetText(h.snippet), type: typeOf.get(h.id) })) : recent.map((n) => ({ id: n.id, title: n.title, sub: n.path, type: n.type }))
+    const byId = new Map(notes.map((n) => [n.id, n]))
+    const rows: { id: string; title: string; sub: string; note?: NoteSummary }[] = hits ? hits.map((h) => ({ id: h.id, title: h.title, sub: snippetText(h.snippet), note: byId.get(h.id) })) : recent.map((n) => ({ id: n.id, title: n.title, sub: n.path, note: n }))
     screen = (
       <div className="mobile__screen">
         <div className="mobile__search">
@@ -342,7 +370,8 @@ export function MobileApp() {
             <li key={r.id}>
               <button type="button" onClick={() => void openNote(r.id)}>
                 <span className="mobile__row-title">
-                  <TypeIcon type={r.type} size={15} /> {r.title}
+                  <TypeIcon type={r.note?.type} icon={r.note?.icon} color={r.note?.color} size={15} /> {r.title}
+                  {!hits && r.note?.bookmarked && <Star size={12} className="mobile__star" fill="currentColor" aria-label="Bookmarked" />}
                 </span>
                 <span className="mobile__row-sub">{r.sub}</span>
               </button>
@@ -366,7 +395,7 @@ export function MobileApp() {
             <li key={p.id}>
               <button type="button" onClick={() => void openNote(p.id)}>
                 <span className="mobile__row-title">
-                  <TypeIcon type="project" size={15} /> {p.title}
+                  <TypeIcon type="project" icon={p.icon} color={p.color} size={15} /> {p.title}
                 </span>
                 <span className="mobile__row-sub">{p.tags.join(', ')}</span>
               </button>

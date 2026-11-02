@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
-import { Archive, ArrowUpRight, Settings2, CalendarDays, Columns2, Download, FilePlus2, FolderOpen, Inbox, LayoutTemplate, Link2, ListChecks, Locate, PanelLeft, PanelRight, Paperclip, RefreshCw, Search, SquareKanban, Trash2, Waypoints, X, Zap } from 'lucide-react'
-import { insertAttachments, linkToCursor, type AttachmentItem, type Editor } from '@graphite/ui'
+import { Archive, ArrowUpRight, Settings2, CalendarDays, Columns2, Download, FilePlus2, FolderOpen, Inbox, LayoutTemplate, Link2, ListChecks, Locate, PanelLeft, PanelRight, Paperclip, RefreshCw, Search, SquareKanban, Star, TextQuote, Trash2, Waypoints, X, Zap } from 'lucide-react'
+import { insertAttachments, linkToCursor, selectionMarkdown, type AttachmentItem, type Editor } from '@graphite/ui'
+import { forgetSnippets, snippetName } from './insertSnippets'
 import { pickAndAttach } from './filePicker'
 import { api, assetUrl, decodePath, INBOX_DIR, type Note, type NoteSummary, type SyncStatus, type VaultInfo } from './api'
 import { Sidebar } from './components/Sidebar'
@@ -100,6 +101,7 @@ export function App() {
       const list = await api.listNotes()
       setNotes(list)
       setVersion((v) => v + 1)
+      forgetSnippets()
       return list
     } catch (e) {
       setError(String(e))
@@ -575,8 +577,52 @@ export function App() {
                   .catch((e) => setError(String(e)))
               },
             },
+            {
+              id: 'bookmark',
+              label: activeNote.properties.bookmarked === true ? `Remove the bookmark on “${activeNote.title}”` : `Bookmark “${activeNote.title}”`,
+              icon: <Star size={16} />,
+              keywords: 'star favourite favorite pin keep',
+              run: () => {
+                const properties = { ...activeNote.properties }
+                if (properties.bookmarked === true) delete properties.bookmarked
+                else properties.bookmarked = true
+                setPatch((prev) => ({ id: activeNote.id, patch: { properties }, seq: (prev?.seq ?? 0) + 1 }))
+              },
+            },
+            {
+              id: 'save-snippet',
+              label: 'Save the selection as a snippet',
+              icon: <TextQuote size={16} />,
+              keywords: 'snippet reuse template text fragment',
+              run: () => {
+                const ed = activeEditor.current
+                const md = ed && !ed.isDestroyed ? selectionMarkdown(ed) : ''
+                if (!md) return setNotice('Select some text first')
+                const name = snippetName(md)
+                void api
+                  .saveSnippet(name, md)
+                  .then(() => refreshList())
+                  .then(() => setNotice(`Saved the snippet “${name}”. Type / and its name to insert it.`))
+                  .catch((e) => setError(String(e)))
+              },
+            },
           ]
         : []),
+      {
+        id: 'new-snippet',
+        label: 'New snippet',
+        icon: <TextQuote size={16} />,
+        keywords: 'snippet reuse text fragment',
+        run: () =>
+          void (async () => {
+            const taken = new Set(notes.map((n) => n.title.toLowerCase()))
+            let name = 'New snippet'
+            for (let i = 2; taken.has(name.toLowerCase()); i++) name = `New snippet ${i}`
+            const n = await api.saveSnippet(name, '')
+            await refreshList()
+            openNote(n.id)
+          })().catch((e) => setError(String(e))),
+      },
       ...(activeNote && !activeIsView ? [{ id: 'attach', label: 'Attach a file to this note…', icon: <Paperclip size={16} />, keywords: 'upload insert embed', run: () => void pickFile().then((f) => f && activeEditor.current && insertAttachments(activeEditor.current, [f])) }] : []),
       { id: 'query', label: 'New saved query', icon: <SquareKanban size={16} />, keywords: 'view list table board filter', run: () => void saveQuery('type:task status:open sort:due', 'list') },
       { id: 'graph', label: 'Show graph of the whole vault', shortcut: 'Ctrl+Shift+G', icon: <Waypoints size={16} />, keywords: 'links network', run: () => showGraph('global') },
@@ -591,7 +637,7 @@ export function App() {
       { id: 'vault', label: 'Open another vault folder', icon: <FolderOpen size={16} />, keywords: 'switch', run: () => void pickVault() },
       { id: 'reindex', label: 'Rebuild the search index', icon: <RefreshCw size={16} />, keywords: 'reindex repair', run: () => void api.rebuildIndex().then(refreshList).catch((e) => setError(String(e))) },
     ],
-    [createNote, openToday, openInbox, openTasksView, openFiles, openSources, pickFile, saveQuery, showAsView, editAsNote, activeIsView, showGraph, lastNote, activeNote, deleteNote, pickVault, refreshList, syncNow, syncStatus, takeSnapshot, hideSidebar, hidePanel, setHideSidebar, setHidePanel],
+    [createNote, openToday, openInbox, openTasksView, openFiles, openSources, pickFile, saveQuery, showAsView, editAsNote, activeIsView, showGraph, lastNote, activeNote, deleteNote, pickVault, refreshList, syncNow, syncStatus, takeSnapshot, hideSidebar, hidePanel, setHideSidebar, setHidePanel, notes, openNote],
   )
 
   if (!vault) return <Welcome onPick={pickVault} error={error} />
@@ -758,6 +804,7 @@ export function App() {
           onFollowLink={(t) => void followLink(t)}
           onShowGraph={() => showGraph('local', true)}
           onEdit={(p) => setPatch((prev) => ({ id: activeNote.id, patch: p, seq: (prev?.seq ?? 0) + 1 }))}
+          getEditor={() => activeEditor.current}
         />
       )}
       {picker && (
@@ -780,7 +827,7 @@ export function App() {
           onOpen={(id, newTab) => openNote(id, newTab || palette.newTab)}
           onOpenFile={(path, newTab) => openAsset(path, newTab || palette.newTab)}
           onCreate={(t) => void createNote(t)}
-          typeOf={(id) => notes.find((n) => n.id === id)?.type}
+          noteOf={(id) => notes.find((n) => n.id === id)}
           onImport={(url) => setImporting({ url })}
         />
       )}

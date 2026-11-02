@@ -680,6 +680,25 @@ fn create_from_template(
 }
 
 #[tauri::command]
+fn snippets(state: State<AppState>) -> CmdResult<Vec<graphite_core::Snippet>> {
+    with_vault(&state, |v| v.snippets())
+}
+
+#[tauri::command]
+fn render_snippet(state: State<AppState>, id: String, title: String) -> CmdResult<String> {
+    with_vault(&state, |v| v.render_snippet(&id, &title))
+}
+
+#[tauri::command]
+fn save_snippet(state: State<AppState>, name: String, body: String) -> CmdResult<Note> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("A snippet needs a name.".into());
+    }
+    with_vault(&state, |v| v.save_snippet(name, &body))
+}
+
+#[tauri::command]
 fn promote_to_project(state: State<AppState>, id: String, template: Option<String>) -> CmdResult<Note> {
     with_vault(&state, |v| v.promote_to_project(&id, template.as_deref()))
 }
@@ -1056,6 +1075,9 @@ pub fn run() {
             local_graph,
             follow_link,
             read_section,
+            snippets,
+            render_snippet,
+            save_snippet,
             complete_title,
             rebuild_index,
             assets,

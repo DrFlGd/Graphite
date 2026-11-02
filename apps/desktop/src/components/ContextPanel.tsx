@@ -1,8 +1,10 @@
-import { Fragment, useEffect, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { outlineOf, scrollToAnchor, scrollToPos, type Editor } from '@graphite/ui'
 import { Maximize2, Plus, X } from 'lucide-react'
 import { TypeIcon } from '../noteTypes'
 import { api, type Backlink, type Graph, type Note, type NoteSummary, type Outgoing } from '../api'
 import { GraphCanvas } from './GraphCanvas'
+import { markdownOutline, type OutlineItem } from '../outline'
 
 interface Props {
   note: Note
@@ -12,10 +14,22 @@ interface Props {
   onShowGraph: () => void
   /** Change front-matter (properties, aliases, type); the note tab saves it. */
   onEdit: (patch: Partial<Pick<Note, 'properties' | 'aliases' | 'type'>>) => void
+  /** The open note's editor, for jumping to a heading from the outline. */
+  getEditor?: () => Editor | null
 }
 
-/** Right-hand panel: backlinks, outgoing links, unlinked mentions, properties. */
-export function ContextPanel({ note, onOpen, onFollowLink, onShowGraph, onEdit }: Props) {
+/** Right-hand panel: outline, graph, backlinks, outgoing links, unlinked mentions, properties. */
+export function ContextPanel({ note, onOpen, onFollowLink, onShowGraph, onEdit, getEditor }: Props) {
+  const outline = useMemo(() => markdownOutline(note.body, note.title), [note.body, note.title])
+  const jump = (item: OutlineItem, index: number) => {
+    const ed = getEditor?.()
+    if (!ed || scrollToAnchor(ed, item.anchor)) return
+    // A heading whose words the editor holds differently (a link in it): go by its place instead.
+    const headings = outlineOf(ed.state.doc)
+    if (headings[0]?.level === 1 && headings[0].text.toLowerCase() === note.title.trim().toLowerCase()) headings.shift()
+    const h = headings[index]
+    if (h) scrollToPos(ed, h.pos)
+  }
   const [backlinks, setBacklinks] = useState<Backlink[]>([])
   const [outgoing, setOutgoing] = useState<Outgoing[]>([])
   const [mentions, setMentions] = useState<NoteSummary[]>([])
@@ -52,6 +66,17 @@ export function ContextPanel({ note, onOpen, onFollowLink, onShowGraph, onEdit }
 
   return (
     <aside className="context">
+      {outline.length > 0 && getEditor && (
+        <Section title="Outline">
+          <nav className="context__outline" aria-label="Outline">
+            {outline.map((h, i) => (
+              <button key={`${i}:${h.anchor}`} type="button" className="context__heading" style={{ paddingLeft: 6 + (h.level - Math.min(...outline.map((o) => o.level))) * 12 }} onClick={() => jump(h, i)} title={h.text}>
+                {h.text}
+              </button>
+            ))}
+          </nav>
+        </Section>
+      )}
       <Section
         title="Graph"
         action={
@@ -70,7 +95,7 @@ export function ContextPanel({ note, onOpen, onFollowLink, onShowGraph, onEdit }
         {linkers.length === 0 && <p className="context__empty">Nothing links here yet.</p>}
         {linkers.map((b) => (
           <button key={b.from.id} type="button" className="context__item" onClick={() => onOpen(b.from.id)} title={b.count > 1 ? `Links here ${b.count} times` : undefined}>
-            <TypeIcon type={b.from.type} size={13} />
+            <TypeIcon type={b.from.type} icon={b.from.icon} color={b.from.color} size={13} />
             <span>{b.from.title}</span>
             {(b.relations.length > 0 || b.count > 1) && <span className="context__rel">{[...b.relations, b.count > 1 ? `×${b.count}` : ''].filter(Boolean).join(' · ')}</span>}
           </button>
@@ -91,7 +116,7 @@ export function ContextPanel({ note, onOpen, onFollowLink, onShowGraph, onEdit }
         <Section title={`Unlinked mentions (${mentions.length})`}>
           {mentions.map((m) => (
             <button key={m.id} type="button" className="context__item" onClick={() => onOpen(m.id)}>
-              <TypeIcon type={m.type} size={13} />
+              <TypeIcon type={m.type} icon={m.icon} color={m.color} size={13} />
               <span>{m.title}</span>
             </button>
           ))}

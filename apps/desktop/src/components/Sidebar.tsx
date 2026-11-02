@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react'
-import { CalendarDays, Download, FilePlus2, FolderOpen, Inbox, LayoutTemplate, ListChecks, Paperclip, RefreshCw, Search, Settings2, Waypoints } from 'lucide-react'
+import { useMemo, useState, type ReactNode } from 'react'
+import { CalendarDays, ChevronRight, Download, FilePlus2, FolderOpen, Hash, Inbox, LayoutTemplate, ListChecks, Paperclip, RefreshCw, Search, Settings2, Star, Waypoints, X } from 'lucide-react'
 import type { NoteSummary, SyncStatus, VaultInfo } from '../api'
 import { syncSummary } from './sync'
-import { TypeChip, typeColour } from '../noteTypes'
+import { TypeChip, TypeIcon, typeColour } from '../noteTypes'
+import { hasTag, tagTree, type TagNode } from '../tags'
 
 interface Props {
   vault: VaultInfo
@@ -40,10 +41,38 @@ const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'bas
 export function Sidebar({ vault, notes, currentId, onOpen, onCreate, onCreateFromTemplate, onPickVault, onSearch, inboxCount, inboxOpen, graphOpen, tasksOpen, filesOpen, sourcesOpen, openTasks, sourceUpdates, sync, syncing, onSync, onSyncSettings, onInbox, onToday, onGraph, onTasks, onFiles, onSources }: Props) {
   const [filter, setFilter] = useState('')
   const [newTitle, setNewTitle] = useState('')
+  const [view, setView] = useState<'notes' | 'tags'>('notes')
+  /** The tag picked in the tag pane; its notes and those of the tags under it are listed. */
+  const [tag, setTag] = useState<string | null>(null)
+
+  /** Notes passing the tag pick and the filter box (`#garden` filters by tag). */
+  const visible = useMemo(() => {
+    const q = filter.trim().toLowerCase()
+    const tagged = tag ? notes.filter((n) => hasTag(n, tag)) : notes
+    if (!q || view === 'tags') return tagged
+    if (q.startsWith('#')) {
+      const t = q.slice(1)
+      return tagged.filter((n) => n.tags.some((x) => x.toLowerCase().startsWith(t)))
+    }
+    return tagged.filter((n) => n.title.toLowerCase().includes(q) || n.path.toLowerCase().includes(q))
+  }, [notes, filter, tag, view])
+
+  const bookmarks = useMemo(() => visible.filter((n) => n.bookmarked).sort((a, b) => collator.compare(a.title, b.title)), [visible])
+
+  const tags = useMemo(() => {
+    const tree = tagTree(notes)
+    const q = filter.trim().toLowerCase().replace(/^#/, '')
+    if (!q) return tree
+    const keep = (nodes: TagNode[]): TagNode[] =>
+      nodes.flatMap((n) => {
+        if (n.path.toLowerCase().includes(q)) return [n]
+        const children = keep(n.children)
+        return children.length ? [{ ...n, children }] : []
+      })
+    return keep(tree)
+  }, [notes, filter])
 
   const groups = useMemo(() => {
-    const q = filter.trim().toLowerCase()
-    const visible = q ? notes.filter((n) => n.title.toLowerCase().includes(q) || n.path.toLowerCase().includes(q)) : notes
     const byFolder = new Map<string, NoteSummary[]>()
     for (const n of visible) {
       const folder = n.path.includes('/') ? n.path.slice(0, n.path.lastIndexOf('/')) : ''
@@ -61,7 +90,28 @@ export function Sidebar({ vault, notes, currentId, onOpen, onCreate, onCreateFro
       return rel ? rel.split('/').join(' / ') : shared ?? 'Vault root'
     }
     return [...byFolder.entries()].sort(([a], [b]) => collator.compare(a, b)).map(([folder, items]) => ({ folder, label: label(folder), items }))
-  }, [notes, filter])
+  }, [visible])
+
+  const noteRow = (n: NoteSummary) => (
+    <li key={n.id}>
+      <button
+        type="button"
+        className={`sidebar__note ${n.id === currentId ? 'is-current' : ''}`}
+        onClick={(e) => onOpen(n.id, e.ctrlKey || e.metaKey)}
+        onAuxClick={(e) => {
+          if (e.button === 1) {
+            e.preventDefault()
+            onOpen(n.id, true)
+          }
+        }}
+        title="Click to open here, Ctrl+click for a new tab"
+      >
+        {(n.icon || n.color) && <TypeIcon type={n.type} icon={n.icon} color={n.color} size={14} />}
+        <span className="sidebar__note-title">{n.title}</span>
+        {n.type !== 'note' && <TypeChip type={n.type} />}
+      </button>
+    </li>
+  )
 
   const submitNew = () => {
     const t = newTitle.trim()
@@ -119,40 +169,61 @@ export function Sidebar({ vault, notes, currentId, onOpen, onCreate, onCreateFro
           <LayoutTemplate size={16} />
         </button>
       </form>
-      <input className="sidebar__filter" value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter notes" aria-label="Filter notes" />
-      <nav className="sidebar__list" aria-label="Notes">
-        {groups.length === 0 && <p className="sidebar__empty">No notes yet.</p>}
-        {groups.map(({ folder, label, items }) => (
-          <section key={folder || '(root)'}>
-            <h3 className="sidebar__folder" title={folder || undefined}>
-              {label}
-            </h3>
-            <ul>
-              {items.map((n) => (
-                <li key={n.id}>
-                  <button
-                    type="button"
-                    className={`sidebar__note ${n.id === currentId ? 'is-current' : ''}`}
-                    onClick={(e) => onOpen(n.id, e.ctrlKey || e.metaKey)}
-                    onAuxClick={(e) => {
-                      if (e.button === 1) {
-                        e.preventDefault()
-                        onOpen(n.id, true)
-                      }
-                    }}
-                    title="Click to open here, Ctrl+click for a new tab"
-                  >
-                    <span className="sidebar__note-title">{n.title}</span>
-                    {n.type !== 'note' && <TypeChip type={n.type} />}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </section>
-        ))}
-      </nav>
+      <div className="sidebar__tabs" role="tablist" aria-label="Sidebar list">
+        <button type="button" role="tab" aria-selected={view === 'notes'} className={view === 'notes' ? 'is-current' : ''} onClick={() => setView('notes')}>
+          Notes
+        </button>
+        <button type="button" role="tab" aria-selected={view === 'tags'} className={view === 'tags' ? 'is-current' : ''} onClick={() => setView('tags')} title="Every tag, nested on /">
+          Tags
+        </button>
+      </div>
+      <input className="sidebar__filter" value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={view === 'tags' ? 'Filter tags' : 'Filter notes, or #tag'} aria-label={view === 'tags' ? 'Filter tags' : 'Filter notes'} />
+      {view === 'tags' ? (
+        <nav className="sidebar__list" aria-label="Tags">
+          {tags.length === 0 && <p className="sidebar__empty">{filter.trim() ? 'No matching tags.' : 'No tags yet. Add them above a note or write #tag in the text.'}</p>}
+          <TagList
+            nodes={tags}
+            open={Boolean(filter.trim())}
+            current={tag}
+            onPick={(t) => {
+              setTag(t)
+              setFilter('')
+              setView('notes')
+            }}
+          />
+        </nav>
+      ) : (
+        <nav className="sidebar__list" aria-label="Notes">
+          {tag && (
+            <div className="sidebar__picked">
+              <span className="tag">#{tag}</span>
+              <span className="sidebar__picked-count">{visible.length}</span>
+              <button type="button" className="icon-btn" title="Show every note" aria-label="Clear tag" onClick={() => setTag(null)}>
+                <X size={13} />
+              </button>
+            </div>
+          )}
+          {bookmarks.length > 0 && (
+            <section className="sidebar__bookmarks">
+              <h3 className="sidebar__folder">
+                <Star size={11} fill="currentColor" /> Bookmarks
+              </h3>
+              <ul>{bookmarks.map(noteRow)}</ul>
+            </section>
+          )}
+          {groups.length === 0 && <p className="sidebar__empty">{notes.length === 0 ? 'No notes yet.' : 'No matching notes.'}</p>}
+          {groups.map(({ folder, label, items }) => (
+            <section key={folder || '(root)'}>
+              <h3 className="sidebar__folder" title={folder || undefined}>
+                {label}
+              </h3>
+              <ul>{items.map(noteRow)}</ul>
+            </section>
+          ))}
+        </nav>
+      )}
       <div className="sidebar__footer">
-        <span>{vault.note_count === notes.length ? `${notes.length} notes` : `${notes.length} of ${vault.note_count} notes`}</span>
+        <span>{view === 'notes' && visible.length !== notes.length ? `${visible.length} of ${notes.length} notes` : `${notes.length} notes`}</span>
         <button
           type="button"
           className={`sidebar__sync ${sync?.enabled ? 'is-on' : ''}`}
@@ -168,5 +239,40 @@ export function Sidebar({ vault, notes, currentId, onOpen, onCreate, onCreateFro
         </button>
       </div>
     </aside>
+  )
+}
+
+/** The tag tree; a tag with tags under it folds open with its chevron. */
+function TagList({ nodes, open, current, onPick, depth = 0 }: { nodes: TagNode[]; open: boolean; current: string | null; onPick: (tag: string) => void; depth?: number }): ReactNode {
+  return (
+    <ul className="sidebar__tags">
+      {nodes.map((n) => (
+        <TagRow key={n.path} node={n} open={open} current={current} onPick={onPick} depth={depth} />
+      ))}
+    </ul>
+  )
+}
+
+function TagRow({ node, open, current, onPick, depth }: { node: TagNode; open: boolean; current: string | null; onPick: (tag: string) => void; depth: number }) {
+  const [expanded, setExpanded] = useState(false)
+  const show = open || expanded
+  return (
+    <li>
+      <div className={`sidebar__tag ${current?.toLowerCase() === node.path.toLowerCase() ? 'is-current' : ''}`} style={{ paddingLeft: 4 + depth * 14 }}>
+        {node.children.length > 0 ? (
+          <button type="button" className="sidebar__tag-fold" aria-label={show ? `Fold ${node.path}` : `Unfold ${node.path}`} aria-expanded={show} onClick={() => setExpanded((e) => !e)}>
+            <ChevronRight size={12} className={show ? 'is-open' : ''} />
+          </button>
+        ) : (
+          <span className="sidebar__tag-fold" />
+        )}
+        <button type="button" className="sidebar__tag-name" onClick={() => onPick(node.path)} title={`Notes tagged #${node.path} or a tag under it`}>
+          <Hash size={12} />
+          <span>{node.name}</span>
+        </button>
+        <span className="sidebar__count sidebar__count--quiet">{node.count}</span>
+      </div>
+      {show && node.children.length > 0 && <TagList nodes={node.children} open={open} current={current} onPick={onPick} depth={depth + 1} />}
+    </li>
   )
 }

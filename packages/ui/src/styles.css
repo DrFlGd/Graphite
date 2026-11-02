@@ -161,6 +161,7 @@
 .gr-more__item svg { color: var(--gr-fg-muted); grid-row: span 2; }
 .gr-more__label { font-weight: 550; }
 .gr-more__desc { font-size: 12px; color: var(--gr-fg-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gr-more__heading { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--gr-fg-muted); padding: 10px 8px 4px; border-top: 1px solid var(--gr-border); margin-top: 4px; }
 
 /* Highlight: ==text== */
 .gr-prose mark { background: #fff1a8; color: inherit; border-radius: 3px; padding: 0 0.1em; }

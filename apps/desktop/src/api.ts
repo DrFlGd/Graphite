@@ -18,6 +18,20 @@ export interface NoteSummary {
   type: string
   tags: string[]
   updated: string | null
+  /** Front-matter `icon` (an emoji or icon name), when set. */
+  icon?: string
+  /** Front-matter `color` (a colour name or `#rrggbb`), when set. */
+  color?: string
+  /** Front-matter `bookmarked: true`. */
+  bookmarked?: boolean
+}
+
+/** A reusable bit of Markdown kept in the vault (core `Snippet`). */
+export interface Snippet {
+  id: string
+  name: string
+  description: string
+  path: string
 }
 
 export interface Note extends NoteSummary {
@@ -365,6 +379,9 @@ export const api = {
   followLink: (target: string) => invoke<string>('follow_link', { target }),
   /** The note a link points at and the Markdown of the whole note, or of its heading section or `^block`. */
   readSection: (target: string, anchor?: string | null) => invoke<Section | null>('read_section', { target, anchor: anchor ?? null }),
+  snippets: () => invoke<Snippet[]>('snippets'),
+  renderSnippet: (id: string, title: string) => invoke<string>('render_snippet', { id, title }),
+  saveSnippet: (name: string, body: string) => invoke<Note>('save_snippet', { name, body }),
   graph: () => invoke<Graph>('graph'),
   localGraph: (id: string, hops = 1) => invoke<Graph>('local_graph', { id, hops }),
   items: (filter: ItemFilter) => invoke<ItemRow[]>('items', { filter }),

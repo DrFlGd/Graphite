@@ -1,11 +1,14 @@
 import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 import { NoteEditor, ToolButton, type Editor, type NoteCandidate } from '@graphite/ui'
-import { FileCode2, History, Trash2 } from 'lucide-react'
+import { FileCode2, History, Star, Trash2 } from 'lucide-react'
 import { api, type Note } from '../api'
 import { SourceBar } from './SourceBar'
 import { TypeChip, datedDailyTitle } from '../noteTypes'
 import { HistoryPanel } from './HistoryPanel'
 import { loadSection } from '../sections'
+import { snippetContext } from '../insertSnippets'
+import { LookPicker } from './LookPicker'
+import { lookOf } from '../noteTypes'
 
 interface Props {
   note: Note
@@ -36,16 +39,34 @@ export function NotePane({ note, saveState, onChange, onFollowLink, jump, onOpen
     return hits.map((h) => ({ id: h.id, title: h.title, subtitle: h.path }))
   }, [])
 
+  /** Set or (with null) remove front-matter keys. */
+  const setProps = (patch: Record<string, unknown>) => {
+    const properties = { ...note.properties }
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === null || v === undefined) delete properties[k]
+      else properties[k] = v
+    }
+    onChange({ ...note, properties })
+  }
+  const look = lookOf(note)
+  const bookmarked = note.properties.bookmarked === true
+
   return (
     <div className="note">
       <header className="note__header">
-        <TitleField value={note.title} onChange={(title) => onChange({ ...note, title })} normalise={note.type === 'daily' ? (t) => datedDailyTitle(t, note.path) : undefined} />
+        <div className="note__title-row">
+          <LookPicker type={note.type} icon={look.icon} color={look.color} onChange={setProps} />
+          <TitleField value={note.title} onChange={(title) => onChange({ ...note, title })} normalise={note.type === 'daily' ? (t) => datedDailyTitle(t, note.path) : undefined} />
+        </div>
         <div className="note__meta">
           {note.type !== 'note' && <TypeChip type={note.type} icon />}
           <span className="note__path" title={note.path}>
             {note.path}
           </span>
           <span className={`note__save note__save--${saveState}`}>{saveState === 'saved' ? 'Saved' : saveState === 'saving' ? 'Saving…' : 'Unsaved'}</span>
+          <ToolButton label={bookmarked ? 'Remove bookmark' : 'Bookmark'} active={bookmarked} onClick={() => setProps({ bookmarked: bookmarked ? null : true })}>
+            <Star size={16} fill={bookmarked ? 'currentColor' : 'none'} />
+          </ToolButton>
           {onReplace && (
             <ToolButton label="History" active={history} onClick={() => setHistory((h) => !h)}>
               <History size={16} />
@@ -82,7 +103,7 @@ export function NotePane({ note, saveState, onChange, onFollowLink, jump, onOpen
           onOpenUrl={onOpenUrl}
           searchNotes={searchNotes}
           resolveSrc={resolveSrc}
-          blockContext={{ pickImage, pickFile, loadSection, followLink: (t, a) => onFollowLink(t, a) }}
+          blockContext={{ pickImage, pickFile, loadSection, followLink: (t, a) => onFollowLink(t, a), ...snippetContext(() => note.title) }}
           onReady={onEditorReady}
           onFiles={onFiles}
           autofocus

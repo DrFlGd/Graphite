@@ -30,7 +30,8 @@ interface Props {
   /** A pasted URL: import it as a source. */
   onImport: (url: string) => void
   /** A note's type, for its icon. */
-  typeOf?: (id: string) => string | undefined
+  /** The summary of a note hit, for its icon. */
+  noteOf?: (id: string) => { type: string; icon?: string; color?: string } | undefined
 }
 
 type Row = { kind: 'hit'; h: SearchHit } | { kind: 'file'; a: AssetHit } | { kind: 'new' } | { kind: 'import' } | { kind: 'cmd'; c: Command }
@@ -39,7 +40,7 @@ type Row = { kind: 'hit'; h: SearchHit } | { kind: 'file'; a: AssetHit } | { kin
  * One box for everything reachable by keyboard: Ctrl+K searches notes (Enter
  * on no match creates one); Ctrl+Shift+P, or a leading `>`, lists commands.
  */
-export function Palette({ mode, commands, onClose, onOpen, onOpenFile, onCreate, onImport, typeOf }: Props) {
+export function Palette({ mode, commands, onClose, onOpen, onOpenFile, onCreate, onImport, noteOf }: Props) {
   const [query, setQuery] = useState(mode === 'commands' ? '>' : '')
   const [hits, setHits] = useState<SearchHit[]>([])
   const [files, setFiles] = useState<AssetHit[]>([])
@@ -125,7 +126,7 @@ export function Palette({ mode, commands, onClose, onOpen, onOpenFile, onCreate,
           {rows.map((row, i) => (
             <li key={row.kind === 'hit' ? row.h.id : row.kind === 'file' ? `file:${row.a.path}` : row.kind === 'cmd' ? row.c.id : row.kind}>
               <button type="button" className={`modal__row ${i === selected ? 'is-selected' : ''}`} onMouseMove={() => setSelected(i)} onClick={(e) => choose(i, e.ctrlKey || e.metaKey)}>
-                {row.kind === 'hit' ? <TypeIcon type={typeOf?.(row.h.id)} size={16} /> : row.kind === 'file' ? <KindIcon kind={row.a.kind} size={16} /> : row.kind === 'new' ? <Plus size={16} /> : row.kind === 'import' ? <Download size={16} /> : (row.c.icon ?? <ChevronRight size={16} />)}
+                {row.kind === 'hit' ? <TypeIcon type={noteOf?.(row.h.id)?.type} icon={noteOf?.(row.h.id)?.icon} color={noteOf?.(row.h.id)?.color} size={16} /> : row.kind === 'file' ? <KindIcon kind={row.a.kind} size={16} /> : row.kind === 'new' ? <Plus size={16} /> : row.kind === 'import' ? <Download size={16} /> : (row.c.icon ?? <ChevronRight size={16} />)}
                 <span className="modal__row-text">
                   <span className="modal__row-title">{row.kind === 'hit' ? row.h.title : row.kind === 'file' ? row.a.name : row.kind === 'new' ? `Create “${text}”` : row.kind === 'import' ? `Import ${shortUrl(text)}` : row.c.label}</span>
                   {row.kind === 'hit' && <span className="modal__row-snippet">{renderSnippet(row.h.snippet)}</span>}

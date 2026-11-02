@@ -43,7 +43,7 @@ export function tabTitle(tab: Tab, notes: NoteSummary[]): string {
 
 /** A column of tabs with one body: notes, the inbox or the graph. */
 export function Pane({ pane, active, notes, canSplit, onFocus, onSelect, onClose, onNewTab, onSplit, leading, trailing, children }: Props) {
-  const icon = (t: Tab) => (t.kind === 'inbox' ? <Inbox size={13} color={typeColour('capture')} /> : t.kind === 'graph' ? <Waypoints size={13} /> : t.kind === 'tasks' ? <ListChecks size={13} color={typeColour('task')} /> : t.kind === 'files' || t.kind === 'asset' ? <Paperclip size={13} /> : t.kind === 'sources' ? <Download size={13} color={typeColour('source')} /> : t.kind === 'note' ? <TypeIcon type={notes.find((n) => n.id === t.noteId)?.type} size={13} /> : null)
+  const icon = (t: Tab) => (t.kind === 'inbox' ? <Inbox size={13} color={typeColour('capture')} /> : t.kind === 'graph' ? <Waypoints size={13} /> : t.kind === 'tasks' ? <ListChecks size={13} color={typeColour('task')} /> : t.kind === 'files' || t.kind === 'asset' ? <Paperclip size={13} /> : t.kind === 'sources' ? <Download size={13} color={typeColour('source')} /> : t.kind === 'note' ? <NoteTabIcon note={notes.find((n) => n.id === t.noteId)} /> : null)
   const middleClick = (e: MouseEvent, ti: number) => {
     if (e.button === 1) {
       e.preventDefault()
@@ -83,4 +83,8 @@ export function Pane({ pane, active, notes, canSplit, onFocus, onSelect, onClose
       <div className="pane__body">{children}</div>
     </section>
   )
+}
+
+function NoteTabIcon({ note }: { note?: NoteSummary }) {
+  return <TypeIcon type={note?.type} icon={note?.icon} color={note?.color} size={13} />
 }

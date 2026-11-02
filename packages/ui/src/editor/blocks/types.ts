@@ -45,6 +45,17 @@ export interface BlockContext {
   followLink?: (target: string, anchor: string | null) => void
   /** How deep this editor sits inside embeds (0 = the note itself). Embeds stop at depth 2. */
   embedDepth?: number
+  /** The vault's snippets, for the `/` menu and the Insert menu. */
+  listSnippets?: () => Promise<SnippetItem[]>
+  /** A snippet's Markdown with its placeholders filled in for this note. */
+  renderSnippet?: (id: string) => Promise<string | null>
+}
+
+/** A reusable bit of Markdown kept in the vault (`snippets/*.md`). */
+export interface SnippetItem {
+  id: string
+  name: string
+  description: string
 }
 
 export interface SectionPreview {

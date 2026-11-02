@@ -486,6 +486,7 @@ impl Index {
             let tags: Vec<String> = tags_stmt
                 .query_map(params![id], |r| r.get(0))?
                 .collect::<std::result::Result<_, _>>()?;
+            let (icon, color, bookmarked) = crate::note::look(&properties);
             let row = NoteRow {
                 note: NoteSummary {
                     id,
@@ -494,6 +495,9 @@ impl Index {
                     note_type,
                     tags,
                     updated: updated.and_then(|u| u.parse().ok()),
+                    icon,
+                    color,
+                    bookmarked,
                 },
                 created,
                 properties,

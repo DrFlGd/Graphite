@@ -20,6 +20,7 @@ pub mod query;
 pub mod relay;
 pub mod sections;
 pub mod snapshot;
+pub mod snippets;
 pub mod sources;
 pub mod sync;
 pub mod tasks;
@@ -41,6 +42,7 @@ pub use project::{LinkedNote, ProjectHub};
 pub use query::{Domain, Group, NoteRow, Query, QueryResult};
 pub use relay::{RelayConfig, RelayReport, RelayStatus};
 pub use snapshot::Snapshot;
+pub use snippets::Snippet;
 pub use sources::{
     classify_url, install_video_tools, missing_video_tools, ImportControl, ImportOptions, ImportReport, PendingCheck,
     PendingImport, SourceKind, SourceRow, Unwatched, UpdateCheck, CANCELLED,

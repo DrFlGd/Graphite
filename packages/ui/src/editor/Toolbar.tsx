@@ -2,7 +2,8 @@ import type { Editor } from '@tiptap/core'
 import { useEditorState } from '@tiptap/react'
 import { Bold, Italic, Strikethrough, Code, Highlighter, Link, Undo2, Redo2, Plus } from 'lucide-react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { BLOCKS, type BlockContext } from './blocks'
+import { BLOCKS, type BlockContext, type BlockDef, type SnippetItem } from './blocks'
+import { snippetBlock } from './snippets'
 
 interface ToolbarProps {
   editor: Editor
@@ -97,6 +98,18 @@ function MoreBlocks({ editor, context }: { editor: Editor; context: BlockContext
   const [at, setAt] = useState<{ top: number; left: number }>({ top: 0, left: 0 })
   const root = useRef<HTMLDivElement>(null)
   const extra = BLOCKS.filter((b) => b.toolbar === false && b.id !== 'paragraph')
+  const [snippets, setSnippets] = useState<SnippetItem[]>([])
+  useEffect(() => {
+    if (!open || !context.listSnippets) return
+    let live = true
+    context
+      .listSnippets()
+      .then((list) => live && setSnippets(list))
+      .catch(() => {})
+    return () => {
+      live = false
+    }
+  }, [open, context])
   useEffect(() => {
     if (!open) return
     const onDown = (e: MouseEvent) => {
@@ -113,6 +126,23 @@ function MoreBlocks({ editor, context }: { editor: Editor; context: BlockContext
     }
   }, [open])
   if (extra.length === 0) return null
+  const item = (b: BlockDef) => (
+    <button
+      key={b.id}
+      type="button"
+      role="menuitem"
+      className="gr-more__item"
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={() => {
+        setOpen(false)
+        void b.insert(editor, context)
+      }}
+    >
+      <b.icon size={16} />
+      <span className="gr-more__label">{b.label}</span>
+      <span className="gr-more__desc">{b.description}</span>
+    </button>
+  )
   return (
     <div className="gr-more" ref={root}>
       <ToolButton
@@ -129,23 +159,13 @@ function MoreBlocks({ editor, context }: { editor: Editor; context: BlockContext
       </ToolButton>
       {open && (
         <div className="gr-more__menu" role="menu" style={{ top: at.top, left: at.left }}>
-          {extra.map((b) => (
-            <button
-              key={b.id}
-              type="button"
-              role="menuitem"
-              className="gr-more__item"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => {
-                setOpen(false)
-                void b.insert(editor, context)
-              }}
-            >
-              <b.icon size={16} />
-              <span className="gr-more__label">{b.label}</span>
-              <span className="gr-more__desc">{b.description}</span>
-            </button>
-          ))}
+          {extra.map(item)}
+          {snippets.length > 0 && (
+            <div className="gr-more__heading" role="presentation">
+              Snippets
+            </div>
+          )}
+          {snippets.map((s) => item(snippetBlock(s)))}
         </div>
       )}
     </div>
