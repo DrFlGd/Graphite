@@ -1,4 +1,7 @@
 import { Node, mergeAttributes, nodeInputRule } from '@tiptap/core'
+import { ReactNodeViewRenderer } from '@tiptap/react'
+import type { BlockContext } from '../blocks/types'
+import { NoteEmbedView, isNoteTarget } from './NoteEmbed'
 
 export interface WikiLinkAttrs {
   target: string
@@ -34,13 +37,23 @@ function splitOnce(s: string, sep: string): [string, string | undefined] {
  * extractor understands (see `core/src/links.rs`), so what the editor shows
  * as a chip is exactly what the index counts as a link.
  */
-export const WikiLink = Node.create({
+export interface WikiLinkOptions {
+  /** Host callbacks; with `loadSection`, `![[Note]]` embeds show the note in place. */
+  context: BlockContext
+  resolveSrc?: (src: string) => string
+}
+
+export const WikiLink = Node.create<WikiLinkOptions>({
   name: 'wikiLink',
   group: 'inline',
   inline: true,
   atom: true,
   selectable: true,
   markdownTokenName: 'wikiLink',
+
+  addOptions() {
+    return { context: {}, resolveSrc: undefined }
+  },
 
   addAttributes() {
     return {
@@ -84,6 +97,17 @@ export const WikiLink = Node.create({
 
   renderText({ node }) {
     return wikiLinkToMarkdown(node.attrs as WikiLinkAttrs)
+  },
+
+  // Note embeds render the note in place; plain links and file embeds stay chips (renderHTML).
+  addNodeView() {
+    const embedView = ReactNodeViewRenderer(NoteEmbedView, { as: 'span', className: 'gr-embed-host' })
+    const { context } = this.options
+    return (props) => {
+      const attrs = props.node.attrs as WikiLinkAttrs
+      if (!attrs.embed || !attrs.target || !isNoteTarget(attrs.target) || !context.loadSection || (context.embedDepth ?? 0) >= 2) return null as never
+      return embedView(props)
+    }
   },
 
   // Typing `[[Title]]` by hand (ignoring the autocomplete) becomes a chip the

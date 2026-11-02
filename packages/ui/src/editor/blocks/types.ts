@@ -34,4 +34,22 @@ export interface BlockContext {
   pickImage?: () => Promise<string | null>
   /** Ask the host for any file; resolves to its Markdown src and display name, or null. */
   pickFile?: () => Promise<{ src: string; name: string } | null>
+  /**
+   * What a link points at, for embeds (`![[Note#Heading]]`) and hover
+   * previews: the note's title and the Markdown of the note, heading section
+   * or `^block`. `markdown` is null when the note has no such part; the
+   * promise resolves to null when there is no such note.
+   */
+  loadSection?: (target: string, anchor: string | null) => Promise<SectionPreview | null>
+  /** Follow a link from inside an embed or a preview. */
+  followLink?: (target: string, anchor: string | null) => void
+  /** How deep this editor sits inside embeds (0 = the note itself). Embeds stop at depth 2. */
+  embedDepth?: number
+}
+
+export interface SectionPreview {
+  title: string
+  /** Note type, for its colour. */
+  type?: string
+  markdown: string | null
 }

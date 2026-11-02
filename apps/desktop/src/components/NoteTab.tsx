@@ -18,7 +18,9 @@ interface Props {
   onActiveNote: (note: Note | null) => void
   onEditorReady: (editor: Editor | null) => void
   onSaved: (note: Note) => void
-  onFollowLink: (target: string) => void
+  onFollowLink: (target: string, anchor?: string | null) => void
+  /** A heading or block to scroll to, for the note it names. */
+  jump?: { noteId: string; anchor: string; seq: number } | null
   onOpenFile: (src: string) => void
   onOpenUrl: (href: string) => void
   onDelete: (note: Note) => void
@@ -32,7 +34,7 @@ interface Props {
  * One open note: loads it, autosaves edits (debounced, flushed on close),
  * reloads when the file changes underneath it, and attaches pasted files.
  */
-export function NoteTab({ noteId, active, changed, saved, patch, onActiveNote, onEditorReady, onSaved, onFollowLink, onOpenFile, onOpenUrl, onDelete, onError, resolveSrc, pickImage, pickFile }: Props) {
+export function NoteTab({ noteId, active, changed, saved, patch, onActiveNote, onEditorReady, onSaved, onFollowLink, jump, onOpenFile, onOpenUrl, onDelete, onError, resolveSrc, pickImage, pickFile }: Props) {
   const [note, setNote] = useState<Note | null>(null)
   const [saveState, setSaveState] = useState<'saved' | 'dirty' | 'saving'>('saved')
   const pending = useRef<{ timer: number | null; note: Note | null }>({ timer: null, note: null })
@@ -165,6 +167,7 @@ export function NoteTab({ noteId, active, changed, saved, patch, onActiveNote, o
       saveState={saveState}
       onChange={change}
       onFollowLink={onFollowLink}
+      jump={jump && jump.noteId === noteId ? jump : null}
       onOpenFile={onOpenFile}
       onOpenUrl={onOpenUrl}
       onDelete={() => onDelete(note)}

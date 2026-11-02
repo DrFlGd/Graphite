@@ -6,6 +6,7 @@ import { SourceKindIcon, shortUrl } from './sources'
 import { ItemText, QueryView, type ViewKind } from './QueryView'
 import { FilesView } from './FilesView'
 import { TypeChip } from '../noteTypes'
+import { loadSection } from '../sections'
 
 interface Props {
   noteId: string
@@ -18,7 +19,7 @@ interface Props {
   /** Open the import dialog with this project preselected. */
   onImport: (project: string) => void
   onOpen: (id: string, newTab?: boolean) => void
-  onFollowLink: (target: string) => void
+  onFollowLink: (target: string, anchor?: string | null) => void
   onOpenUrl: (href: string) => void
   onChanged: () => void
   onError: (e: string) => void
@@ -141,7 +142,8 @@ export function ProjectHub({ noteId, version, vaultRoot, assetVersion, onOpenFil
             editable={false}
             toolbar={false}
             onChange={() => {}}
-            onFollowLink={(t) => onFollowLink(t)}
+            onFollowLink={(t, a) => onFollowLink(t, a)}
+            blockContext={{ loadSection, followLink: (t, a) => onFollowLink(t, a) }}
             onOpenFile={(src) => onOpenFile(src)}
             onOpenUrl={(href) => onOpenUrl(href)}
             resolveSrc={(src) => assetUrl(vaultRoot, src)}

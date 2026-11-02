@@ -35,8 +35,36 @@ flowchart LR
   Sensor --> Controller --> Pump
 \`\`\`
 
+Power details: [[Battery#Sizing]] and the whole [[Battery]] note.
+
+![[Battery#^cells]]
+
+A paragraph to link to. ^para1
+
 [^1]: Measured on the bench, 2026-10-12.
 `
+
+const VAULT: Record<string, string> = {
+  battery: '# Battery\n\nA 12 V pack.\n\n## Sizing\n\nAbout $E = V \\cdot Ah$.\n\n> [!tip] Keep it cool\n> Below 40 °C.\n\n- 4 cells in series ^cells\n  - 18650\n',
+}
+
+function section(md: string, anchor: string | null): string | null {
+  if (!anchor) return md
+  const lines = md.split('\n')
+  if (anchor.startsWith('^')) {
+    const i = lines.findIndex((l) => l.trimEnd().endsWith(' ' + anchor))
+    if (i < 0) return null
+    let end = i + 1
+    while (end < lines.length && /^\s+\S/.test(lines[end])) end++
+    return lines.slice(i, end).join('\n').replace(' ' + anchor, '')
+  }
+  const i = lines.findIndex((l) => /^#+\s/.test(l) && l.replace(/^#+\s*/, '').toLowerCase() === anchor.toLowerCase())
+  if (i < 0) return null
+  const level = /^#+/.exec(lines[i])![0].length
+  let end = i + 1
+  while (end < lines.length && !(/^#+\s/.test(lines[end]) && /^#+/.exec(lines[end])![0].length <= level)) end++
+  return lines.slice(i, end).join('\n')
+}
 
 const NOTES = ['Garden Robot', 'Chassis v3', 'Motor driver', 'Battery', 'Solar still']
 
@@ -50,9 +78,16 @@ function Harness() {
           docKey="harness"
           markdown={md}
           onChange={setMd}
-          onFollowLink={(t) => setFollowed(t)}
           searchNotes={async (q) => NOTES.filter((n) => n.toLowerCase().startsWith(q.toLowerCase())).map((title) => ({ id: title, title, subtitle: `notes/${title}.md` }))}
-          blockContext={{ pickImage: async () => 'attachments/example.png' }}
+          blockContext={{
+            pickImage: async () => 'attachments/example.png',
+            loadSection: async (target, anchor) => {
+              const md = VAULT[target.toLowerCase()]
+              return md === undefined ? null : { title: target, markdown: section(md, anchor) }
+            },
+            followLink: (t, a) => setFollowed(a ? `${t}#${a}` : t),
+          }}
+          onFollowLink={(t, a) => setFollowed(a ? `${t}#${a}` : t)}
           autofocus
         />
       </div>
