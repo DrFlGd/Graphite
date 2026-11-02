@@ -295,6 +295,26 @@ pub fn start_install_video_tools(app: AppHandle, state: State<AppState>) -> u64 
     id
 }
 
+/// Download the speech model for dictation in the background.
+#[tauri::command]
+pub fn start_install_dictation_model(app: AppHandle, state: State<AppState>) -> u64 {
+    let (id, cancel) = state.jobs.add("model", "Speech model".into());
+    emit(&app);
+    tauri::async_runtime::spawn_blocking(move || {
+        let ctl = Control {
+            app: app.clone(),
+            id,
+            cancel,
+            last: Mutex::new((Instant::now(), String::new())),
+        };
+        let outcome = graphite_core::dictation::download_model(&ctl)
+            .map(|_| (None, "Dictation is ready".to_string()))
+            .map_err(err);
+        finish(&app, id, outcome);
+    });
+    id
+}
+
 #[tauri::command]
 pub fn jobs(state: State<AppState>) -> Vec<Job> {
     state.jobs.snapshot()

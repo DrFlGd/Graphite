@@ -155,9 +155,17 @@ export interface StartImport {
 export type JobState = 'running' | 'done' | 'failed' | 'cancelled'
 
 /** An import, re-import or tool download running in the background. */
+export interface DictationStatus {
+  /** Whether this build can transcribe (not on phones). */
+  available: boolean
+  /** Whether the speech model is downloaded. */
+  ready: boolean
+  model_mb: number
+}
+
 export interface Job {
   id: number
-  kind: 'import' | 'reimport' | 'tools'
+  kind: 'import' | 'reimport' | 'tools' | 'model'
   label: string
   source: SourceKind | null
   stage: string
@@ -182,6 +190,8 @@ export interface Tools {
   yt_dlp: boolean
   deno: boolean
   browser: boolean
+  /** Tesseract, for the text of scanned PDFs. */
+  tesseract: boolean
 }
 
 export interface Outgoing {
@@ -428,6 +438,10 @@ export const api = {
   startReimport: (id: string, withTools = false) => invoke<number>('start_reimport', { id, withTools }),
   /** Download the newest yt-dlp plus missing Deno and ffmpeg in the background. */
   startInstallVideoTools: () => invoke<number>('start_install_video_tools'),
+  dictationStatus: () => invoke<DictationStatus>('dictation_status'),
+  startInstallDictationModel: () => invoke<number>('start_install_dictation_model'),
+  /** Recognise speech in 16 kHz mono 16-bit PCM, on this device. */
+  transcribe: (pcm: Int16Array) => invoke<string>('transcribe', new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength)),
   jobs: () => invoke<Job[]>('jobs'),
   cancelJob: (id: number) => invoke<void>('cancel_job', { id }),
   dismissJob: (id: number) => invoke<void>('dismiss_job', { id }),

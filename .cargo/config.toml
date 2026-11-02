@@ -1,0 +1,4 @@
+[env]
+# whisper.cpp (dictation) otherwise compiles for the build machine's own
+# CPU, and a release built on CI could crash on an older one.
+GGML_NATIVE = "OFF"

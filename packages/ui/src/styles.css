@@ -55,10 +55,11 @@
 .gr-editor__content { flex: 1; overflow: auto; padding: 8px 28px 48px; }
 
 /* Toolbar */
-.gr-toolbar { display: flex; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; gap: 2px 10px; padding: 6px 16px; border-bottom: 1px solid var(--gr-border); background: var(--gr-bg-elev); position: sticky; top: 0; z-index: 2; }
+.gr-toolbar { display: flex; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; gap: 2px 8px; padding: 6px 12px; border-bottom: 1px solid var(--gr-border); background: var(--gr-bg-elev); position: sticky; top: 0; z-index: 2; }
 .gr-toolbar__group { display: flex; flex: none; gap: 2px; }
 .gr-toolbar__trailing { margin-left: auto; }
-.gr-tool { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border: 0; border-radius: var(--gr-radius); background: transparent; color: var(--gr-fg-muted); cursor: pointer; }
+.gr-tool { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 28px; padding: 0; border: 0; border-radius: var(--gr-radius); background: transparent; color: var(--gr-fg-muted); cursor: pointer; }
+.gr-tool svg { flex-shrink: 0; }
 .gr-tool:hover:not(:disabled) { background: var(--gr-bg-subtle); color: var(--gr-fg); }
 .gr-tool.is-active { background: var(--gr-accent-bg); color: var(--gr-accent); }
 .gr-tool:disabled { opacity: 0.4; cursor: default; }
@@ -262,3 +263,11 @@
 .gr-preview__head:hover { text-decoration: underline; }
 .gr-preview__anchor { color: var(--gr-fg-muted); font-weight: 500; }
 .gr-preview__body { overflow: auto; padding: 4px 14px 10px; }
+
+/* Dictate button: red while recording, its ring following the microphone level */
+.gr-tool.gr-dictate--recording { color: #fff; background: #d64545; }
+.gr-tool.gr-dictate--recording:hover:not(:disabled) { color: #fff; background: #c03b3b; }
+.gr-tool.gr-dictate--writing:disabled, .gr-tool.gr-dictate--starting:disabled { opacity: 1; cursor: progress; }
+.gr-tool.gr-dictate--recording { transition: box-shadow 80ms linear; }
+.gr-spin { animation: gr-spin 0.9s linear infinite; }
+@keyframes gr-spin { to { transform: rotate(360deg); } }

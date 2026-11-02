@@ -348,7 +348,7 @@ fn fetch_to_file(url: &str, dest: &Path) -> Result<(String, Option<String>)> {
 }
 
 /// `fetch_to_file`, reporting bytes under `stage` and stopping when cancelled.
-fn fetch_to_file_with(
+pub(crate) fn fetch_to_file_with(
     url: &str,
     dest: &Path,
     ctl: &dyn ImportControl,

@@ -4,6 +4,7 @@ import { Bold, Italic, Strikethrough, Code, Highlighter, Link, Undo2, Redo2, Plu
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { BLOCKS, type BlockContext, type BlockDef, type SnippetItem } from './blocks'
 import { snippetBlock } from './snippets'
+import { DictateButton } from './DictateButton'
 
 interface ToolbarProps {
   editor: Editor
@@ -69,6 +70,11 @@ export function Toolbar({ editor, context, trailing }: ToolbarProps) {
           <Redo2 size={16} />
         </ToolButton>
       </div>
+      {context.dictation && (
+        <div className="gr-toolbar__group">
+          <DictateButton editor={editor} host={context.dictation} />
+        </div>
+      )}
       <div className="gr-toolbar__group">
         {MARKS.map((m, i) => (
           <ToolButton key={m.id} label={m.label} shortcut={m.shortcut} active={active?.marks[i]} onClick={() => m.run(editor)}>

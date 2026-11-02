@@ -48,6 +48,7 @@ export function JobsPanel({ onOpen, onFinished, onError }: Props) {
   const retry = async (job: Job, withTools: boolean) => {
     try {
       if (job.kind === 'tools') await api.startInstallVideoTools()
+      else if (job.kind === 'model') await api.startInstallDictationModel()
       else if (job.kind === 'reimport' && job.sourceId) await api.startReimport(job.sourceId, withTools)
       else if (job.request) await api.startImport({ ...job.request, kind: job.request.kind ?? undefined, withTools })
       await api.dismissJob(job.id)

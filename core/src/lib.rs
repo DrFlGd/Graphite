@@ -9,6 +9,7 @@ pub mod attachments;
 pub mod capture;
 pub mod config;
 pub mod device;
+pub mod dictation;
 pub mod drawings;
 pub mod error;
 pub mod graph;

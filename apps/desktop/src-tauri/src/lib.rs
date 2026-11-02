@@ -819,6 +819,39 @@ fn missing_video_tools() -> Vec<&'static str> {
     graphite_core::missing_video_tools()
 }
 
+// ----- dictation (B11) -----
+
+#[derive(Serialize)]
+struct DictationStatus {
+    /// Whether this build can transcribe (not on phones).
+    available: bool,
+    /// Whether the speech model is downloaded.
+    ready: bool,
+    /// The model's download size.
+    model_mb: u32,
+}
+
+#[tauri::command]
+fn dictation_status() -> DictationStatus {
+    use graphite_core::dictation;
+    DictationStatus {
+        available: dictation::available(),
+        ready: dictation::model_ready(),
+        model_mb: dictation::MODEL_MB,
+    }
+}
+
+/// Turn a recording into text. The body is the raw audio: 16 kHz mono
+/// little-endian 16-bit PCM.
+#[tauri::command]
+async fn transcribe(request: tauri::ipc::Request<'_>) -> CmdResult<String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("Expected the recording as raw audio.".into());
+    };
+    let samples = graphite_core::dictation::pcm16_to_f32(bytes);
+    blocking(move || graphite_core::dictation::transcribe(&samples).map_err(err)).await
+}
+
 // ----- sources (importers) -----
 // Imports and tool downloads run as background jobs (see `jobs.rs`). Update
 // checks are quick, but still fetch off the main thread and without the
@@ -1045,7 +1078,23 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(AppState::default())
+        // The only page is the app's own, and it asks for the microphone
+        // only when you press Dictate.
+        .on_permission_request(|_, kind| match kind {
+            tauri::webview::PermissionKind::Microphone => tauri::webview::PermissionResponse::Allow,
+            _ => tauri::webview::PermissionResponse::Default,
+        })
         .setup(|app| {
+            // WebKitGTK keeps getUserMedia switched off unless asked.
+            #[cfg(target_os = "linux")]
+            if let Some(main) = app.get_webview_window("main") {
+                let _ = main.with_webview(|wv| {
+                    use webkit2gtk::{SettingsExt, WebViewExt};
+                    if let Some(settings) = WebViewExt::settings(&wv.inner()) {
+                        settings.set_enable_media_stream(true);
+                    }
+                });
+            }
             // Phones have no home directory: keep the device id and relay
             // settings in the app's private storage instead.
             #[cfg(mobile)]
@@ -1115,6 +1164,9 @@ pub fn run() {
             jobs::start_import,
             jobs::start_reimport,
             jobs::start_install_video_tools,
+            jobs::start_install_dictation_model,
+            dictation_status,
+            transcribe,
             jobs::jobs,
             jobs::cancel_job,
             jobs::dismiss_job,

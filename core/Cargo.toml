@@ -29,12 +29,19 @@ zip.workspace = true
 hmac.workspace = true
 chacha20poly1305.workspace = true
 base64.workspace = true
+sha1.workspace = true
+whisper-rs = { workspace = true, optional = true }
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
 ureq = { workspace = true, features = ["platform-verifier"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 ureq = { workspace = true }
+
+[features]
+# On-device dictation with whisper.cpp (B11). Off by default: it needs
+# cmake and a C++ compiler, and the phone build leaves it out.
+dictation = ["dep:whisper-rs"]
 
 [dev-dependencies]
 tempfile.workspace = true

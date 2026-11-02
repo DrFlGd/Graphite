@@ -356,10 +356,23 @@ function PdfPreview({ asset, vaultRoot, page, version, tools, onError }: { asset
       </div>
       {!canRender && <p className="hub__empty">Install poppler (pdftoppm) to see pages here. The text below is still searchable.</p>}
       {canRender && (src ? <img className="pdf__page-img" src={src} alt={`Page ${current}`} /> : <div className="app__empty">Rendering page {current}…</div>)}
-      {(showText || !canRender) && text !== null && <pre className="asset__code asset__code--prose">{text || 'No text could be extracted from this PDF (it may be scanned; OCR comes in a later milestone).'}</pre>}
+      {(showText || !canRender) && text !== null && looksScanned(text, total) && (
+        <p className="hub__empty">
+          {tools?.tesseract
+            ? 'This PDF looks scanned and no text could be read from its pages.'
+            : 'This PDF looks scanned. Install Tesseract (and poppler) and Graphite reads its pages so their text is searchable.'}
+        </p>
+      )}
+      {(showText || !canRender) && text !== null && text.trim() !== '' && <pre className="asset__code asset__code--prose">{text}</pre>}
       {!canRender && text === null && <TextLoader path={asset.path} onText={setText} onError={onError} />}
     </div>
   )
+}
+
+/** Too little text for its pages to be the real text: a scan (as the core judges it). */
+export function looksScanned(text: string, pages: number): boolean {
+  const letters = text.match(/[\p{L}\p{N}]/gu)?.length ?? 0
+  return letters < 20 * Math.max(1, pages)
 }
 
 function TextLoader({ path, onText, onError }: { path: string; onText: (t: string) => void; onError: (e: string) => void }) {

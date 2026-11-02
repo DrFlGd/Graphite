@@ -299,6 +299,7 @@ fn tools_cmd(json: bool, install_video_tools: bool) -> Result<()> {
             ("yt-dlp", t.yt_dlp, "video importer"),
             ("deno", t.deno, "lets yt-dlp see all YouTube formats"),
             ("browser", t.browser, "web page screenshots (Chromium, Chrome or Edge)"),
+            ("tesseract", t.tesseract, "text of scanned PDFs"),
         ] {
             println!("{:<10} {}  {}", name, if ok { "found  " } else { "missing" }, what);
         }

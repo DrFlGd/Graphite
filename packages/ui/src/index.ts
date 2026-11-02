@@ -14,3 +14,4 @@ export { insertAttachments, isImageSrc, encodeSrc, type AttachmentItem } from '.
 export { embedKind, isMediaSrc, extOf, VIDEO_EXTS, AUDIO_EXTS, MODEL_EXTS, DRAWING_EXTS, type EmbedKind } from './editor/fileKinds'
 export type { Editor } from '@tiptap/core'
 export { prepareTaskMarkers, MARKERS as TASK_MARKERS, type TaskState } from './editor/blocks/taskItem'
+export { DICTATION_RATE, type DictationHost } from './editor/dictation'
