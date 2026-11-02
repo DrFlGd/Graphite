@@ -19,6 +19,7 @@ The foundation everything else sits on.
 | A5 | **Stable IDs** for every note and asset so links survive renames and moves | P0 | M1 | added | |
 | A6 | **Multiple vaults** (e.g. personal vs. work), switchable | P2 | M8 | added | |
 | A7 | **Templates** for note types and whole projects (research, build, software, writing) | P1 | M2 | added | |
+| A8 | **Per-note icon and colour** in front-matter (`icon`, `color`), shown wherever the note appears, overriding the type's | P1 | 0.4 | added | **accept** (Jerred, 2026-11-02, after the Alexandrie and Obsidian comparison) |
 
 ## B · Rapid capture
 
@@ -36,6 +37,7 @@ The brief's top priority: lower the barrier to getting things in.
 | B8 | **Email-in / URL inbox**: send a link or note to a private address or paste into a watched folder | P2 | M6 | added | |
 | B9 | **Capture widgets / home-screen shortcuts** on mobile | P2 | M4 | added | |
 | B10 | **Daily note / journal** as a default landing place for chronological capture | P1 | M1 | added | |
+| B11 | **Dictation in the editor**: speak into any note; transcribed on the device | P1 | 0.4 | added | **accept** (Jerred, 2026-11-02, after the Alexandrie and Obsidian comparison) |
 
 ## C · Connected documentation
 
@@ -50,8 +52,13 @@ The brief's top priority: lower the barrier to getting things in.
 | C7 | **Aliases** for notes so links can use alternate names | P1 | M1 | added | |
 | C8 | **Note history**: per-note version history with diff and restore | P1 | M4 | added | |
 | C9 | **Decision log**: `decision` note type with context/options/outcome, listed per project | P1 | M2 | added | |
-| C10 | **Footnotes, callouts, math, Mermaid diagrams** | P2 | M5 | added | |
+| C10 | **Footnotes, callouts, math, Mermaid diagrams, highlights**, in the syntax Obsidian and GitHub read (not Alexandrie's `:::` containers) | P1 | 0.4 | added | **accept** (Jerred, 2026-11-02, after the Alexandrie and Obsidian comparison) |
 | C11 | **Block insert toolbar and slash menu**: every block type (table, code block, embed, image, callout, task list, heading, divider, 3D/video/PDF embed) is addable from an icon toolbar, a `/` menu and a keyboard shortcut; block types are registered in one place so adding or changing one is a single module | P0 | M1 | brief | **accept** (Jerred: editor must be intuitive and robust; graphical/iconographic way to add tables, code blocks, embeds) |
+| C13 | **Snippets**: reusable text fragments kept in the vault (`snippets/*.md`) and inserted from the `/` menu | P1 | 0.4 | added | **accept** (Jerred, 2026-11-02, after the Alexandrie and Obsidian comparison) |
+| C14 | **Block links and section embeds**: `[[Note#^id]]` and `![[Note#Heading]]` / `![[Note#^id]]`, and links that jump to the heading or block | P1 | 0.4 | added | **accept** (Jerred, 2026-11-02, after the Alexandrie and Obsidian comparison) |
+| C15 | **Link hover preview**: hovering a link shows the note (or section) it points at | P1 | 0.4 | added | **accept** (Jerred, 2026-11-02, after the Alexandrie and Obsidian comparison) |
+| C16 | **Outline** of the open note's headings, and **bookmarks** for notes kept at hand | P1 | 0.4 | added | **accept** (Jerred, 2026-11-02, after the Alexandrie and Obsidian comparison) |
+| C17 | **Tag pane**: nested tags (`#project/garden`) as a tree with counts; a parent tag matches its children | P1 | 0.4 | added | **accept** (Jerred, 2026-11-02, after the Alexandrie and Obsidian comparison) |
 | C12 | **Block editing affordances**: drag handle per block, table cell toolbar (add/remove row/column, align), code block language picker, embed resize, convert-block-to-type menu | P0 | M1 | brief | **accept** |
 
 ## D · Projects and progress tracking
@@ -84,6 +91,7 @@ The brief's top priority: lower the barrier to getting things in.
 | E8 | **Image annotation** (arrows, boxes, text) saved as a sidecar so the original is untouched | P2 | M5 | added | |
 | E9 | **Large-file policy**: configurable size threshold above which files are referenced in place (not copied) and excluded from sync | P1 | M4 | added | |
 | E10 | **Deduplication** by content hash | P2 | M3 | added | |
+| E11 | **Drawings**: a sketching and diagram editor (Excalidraw) whose files live in the vault and embed in notes; a first step towards the whiteboard | P1 | 0.4 | added | **accept** (Jerred, 2026-11-02, after the Alexandrie and Obsidian comparison) |
 
 ## F · Importers and source tracking
 
@@ -114,7 +122,7 @@ Every view is a **saved query + a layout**. The same filter (project = X, type =
 | G3 | **Task tracker view** (tree + filters + due dates) | P0 | M2 | brief | |
 | G4 | **Board / Kanban view** grouped by any property | P0 | M2 | brief | |
 | G5 | **Node-graph view**: local graph (N hops from a note) and global graph; typed links drawn differently; filter by query; click-to-navigate; drag-to-link | P0 | M1 (basic) / M5 (full) | brief | |
-| G6 | **Whiteboard / canvas**: free-form spatial arrangement of notes, assets, text, shapes and connectors; infinite canvas; a canvas is itself a note | P0 | M5 | brief | |
+| G6 | **Whiteboard / canvas**: free-form spatial arrangement of notes, assets, text, shapes and connectors; infinite canvas; a canvas is itself a note. Stored in the open JSON Canvas format (`*.canvas`), so canvases open in Obsidian too | P0 | M5 | brief | format **accepted** (Jerred, 2026-11-02) |
 | G7 | **Timeline / Gantt** for tasks and milestones | P1 | M5 | added | |
 | G8 | **Calendar view** (due dates, daily notes, captured-on) | P2 | M5 | added | |
 | G9 | **Workspaces / layouts**: saved arrangements of panes and views per project | P1 | M5 | added | |
@@ -128,12 +136,13 @@ Every view is a **saved query + a layout**. The same filter (project = X, type =
 | --- | --- | --- | --- | --- | --- |
 | H1 | **Full-text search** across notes, properties, transcripts, OCR text, extracted PDF/web text, file names | P0 | M1 (notes) / M3 (media) | brief | |
 | H2 | **Transcription** of imported/captured video and audio (local Whisper-class model), stored as a sidecar note with timestamps linking back into the video | P1 | M7 | added | |
-| H3 | **OCR** on images and scanned PDFs | P1 | M7 | added | |
+| H3 | **OCR** on images and scanned PDFs | P1 | 0.4 (scanned PDFs) / M7 | added | **accept** (Jerred, 2026-11-02, after the Alexandrie and Obsidian comparison): scanned PDFs first |
 | H4 | **Semantic search** (local embeddings) with "related notes" panel | P1 | M7 | added | |
 | H5 | **Ask-your-vault assistant**: chat over a project or the whole vault with citations to notes/timestamps; pluggable model (local via Ollama-style runtime, or API with explicit opt-in) | P1 | M7 | added | |
 | H6 | **Assistant actions**: summarise a source, draft a task list from a note, propose links, extract gaps/questions from a note | P2 | M7 | added | |
 | H7 | **Resurfacing / review**: periodic prompts for stale captures and untouched ideas; "on this day" | P2 | M7 | added | |
 | H8 | **Auto-tagging and link suggestions** from embeddings | P2 | M7 | added | |
+| H9 | **Local LLM on the home server**: llama.cpp (or similar) in the self-hosted server container, with tools to search and read the vault. Its edits are **proposals**, reviewed and accepted like pull requests, never written straight into notes. See "Local LLM" below | P1 | M7 | added | **accept as a later milestone** (Jerred, 2026-11-02) |
 
 ## I · Sync and multi-device
 
@@ -182,6 +191,7 @@ The brief asks for connectivity with 3D modelling, vector graphics and CAD tools
 | L2 | **No telemetry by default**; opt-in crash reports | P0 | M1 | added | |
 | L3 | **Performance targets**: 50k notes / 100 GB assets without the UI degrading; index rebuild in minutes | P1 | M8 | added | |
 | L4 | **Export everything** (it's already files, but one-click zip + JSON of the index) | P1 | M8 | added | |
+| L5 | **Export a note or project** to Markdown, HTML or PDF with a reading theme (from Alexandrie) | P2 | later | added | **later** (Jerred, 2026-11-02: keep on the roadmap) |
 | L5 | **Auto-update** channels (stable/beta) | P1 | M8 | added | |
 
 ---
@@ -193,3 +203,13 @@ Items moved here during review (marked `later`) with a one-line reason, so they 
 | ID | Feature | Reason deferred |
 | --- | --- | --- |
 | | | |
+
+## Local LLM (H9, M7)
+
+Asked for by Jerred on 2026-11-02 as a later milestone. The outline, to be refined when the milestone starts:
+
+- **Where it runs.** In the self-hosted server container, next to the relay: a llama.cpp server (or a compatible runtime) with a small instruction-tuned model, reached over the user's Tailscale network or LAN.
+- **Trust.** The relay is end-to-end encrypted and cannot read notes. A server that runs a model has to, so it becomes a trusted device holding the vault key. That is an explicit switch in the sync panel, off by default, and the server keeps its own copy of the vault like any other device.
+- **What the model can do.** Tools over Graphite's own core: full-text (and later semantic) search, read a note or a section, list tasks and open questions, follow links. Answers cite the notes they used.
+- **Edits are proposals.** The model never writes a note. It files a proposal: the notes it would change, the diff for each, its reason and the notes it relied on. Proposals are plain files in the vault (`proposals/<id>.md` with the diff in a fenced block), so they sync to every device. The app lists open proposals; each can be read as a diff, accepted (in full or per note), edited first, or rejected. Accepting applies the change through the normal write path, so it lands in note history and can be undone like any edit. A proposal whose base text has changed since it was made is shown as stale and must be refreshed before it can be accepted.
+- **Boundaries.** No network access for the model beyond the vault tools; no deletion tool; rate and size limits on proposals.

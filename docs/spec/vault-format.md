@@ -110,6 +110,19 @@ Progress for a project is the share of its done tasks over all its tasks except 
 
 Standard syntax with a vault-relative path: `![alt](attachments/Garden Robot/chassis.png)`. Paths are relative to the vault root, use `/`, and never start with `/` or contain `..`. Spaces and parentheses in a path are written percent-encoded (`attachments/Garden%20Robot/x.png`), as CommonMark requires; readers decode them. A relative path in `[text](path)` or `![alt](path)` with no scheme is a **file link** and is indexed (kind `file`), so an asset knows which notes reference it; `![[chassis.stl]]` embeds the file by name. A relative `.md` path is an ordinary note link.
 
+### Callouts, maths, diagrams, footnotes and highlights
+
+The editor writes these in the syntax Obsidian, GitHub and Pandoc already read, so a note opened in another tool shows the same thing (or, at worst, readable text). Nothing here needs a Graphite-only extension.
+
+| Syntax | Meaning |
+| --- | --- |
+| `> [!tip] Title` then `> body` lines | Callout. The type is any word; Graphite colours `note`, `info`, `tip`, `abstract`, `todo`, `success`, `question`, `warning`, `failure`, `danger`, `bug`, `example`, `quote` and their usual aliases. The title is optional. `[!tip]+` folds and starts open, `[!tip]-` folds and starts closed. Callouts nest like quotes. |
+| `$E = mc^2$` | Inline maths (LaTeX, rendered with KaTeX). The opening `$` is not followed by a space and the closing `$` is not preceded by a space or followed by a digit, so `$5 and $10` stays text. A literal `$` that would otherwise open maths is written `\$`. |
+| `$$` line, LaTeX lines, `$$` line | Maths on its own lines. A one-line `$$x$$` is read too; the editor writes the three-line form. |
+| fenced code with language `mermaid` | A Mermaid diagram (flowchart, sequence, Gantt, timeline and so on), shown as a picture with the code underneath while editing. |
+| `[^1]` in text, `[^1]: text` on its own line | Footnote. Labels may be numbers or words. Definitions that follow one another stay on adjacent lines; an indented line continues the definition above it. New footnotes are numbered one past the highest number in the note and added after the last definition. |
+| `==text==` | Highlighted text. |
+
 ### Assets (M3)
 
 Every non-Markdown file in the vault (outside `.graphite/` and hidden folders) is an **asset**, keyed by its vault-relative path, which is stable so external tools can link back to it. The file is never modified: everything Graphite learns about it goes in the index and everything it generates goes under `.graphite/derived/`.

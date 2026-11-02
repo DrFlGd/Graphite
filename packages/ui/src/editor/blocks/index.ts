@@ -2,7 +2,10 @@ import type { AnyExtension } from '@tiptap/core'
 import type { BlockDef } from './types'
 import { paragraph, heading1, heading2, heading3, blockquote, divider } from './text'
 import { bulletList, orderedList, taskList, gap } from './lists'
-import { codeBlock } from './codeBlock'
+import { codeBlock, mermaidDiagram } from './codeBlock'
+import { callout } from './callout'
+import { mathBlock, mathInline } from './math'
+import { footnote } from './footnote'
 import { table } from './table'
 import { image } from './image'
 import { file } from './fileEmbed'
@@ -21,10 +24,15 @@ export const BLOCKS: BlockDef[] = [
   taskList,
   gap,
   blockquote,
+  callout,
   codeBlock,
   table,
   image,
   file,
+  mermaidDiagram,
+  mathBlock,
+  mathInline,
+  footnote,
   divider,
   noteLink,
 ]

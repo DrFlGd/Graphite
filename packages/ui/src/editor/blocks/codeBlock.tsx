@@ -1,7 +1,9 @@
-import { Code2 } from 'lucide-react'
+import { Code2, Workflow } from 'lucide-react'
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
 import { NodeViewContent, NodeViewWrapper, ReactNodeViewRenderer, type NodeViewProps } from '@tiptap/react'
 import { common, createLowlight } from 'lowlight'
+import { useEffect, useState } from 'react'
+import { MermaidPreview } from './mermaid'
 import type { BlockDef } from './types'
 
 const lowlight = createLowlight(common)
@@ -23,6 +25,7 @@ export const CODE_LANGUAGES = [
   'kotlin',
   'makefile',
   'markdown',
+  'mermaid',
   'python',
   'rust',
   'shell',
@@ -35,11 +38,17 @@ export const CODE_LANGUAGES = [
 ]
 
 /** Code block with an in-place language picker (C12). */
-function CodeBlockView({ node, updateAttributes, editor }: NodeViewProps) {
+function CodeBlockView({ node, updateAttributes, editor, getPos }: NodeViewProps) {
   const language: string = node.attrs.language ?? ''
   const options = CODE_LANGUAGES.includes(language) ? CODE_LANGUAGES : [language, ...CODE_LANGUAGES]
+  const isMermaid = language === 'mermaid'
+  const inside = useCursorInside(editor, getPos, isMermaid)
+  // A diagram shows its picture; the code appears while the cursor is in it, or when it is empty or broken.
+  const [broken, setBroken] = useState(false)
+  const [opening, setOpening] = useState(false)
+  const showCode = !isMermaid || inside || broken || opening || !node.textContent.trim()
   return (
-    <NodeViewWrapper className="gr-code-block">
+    <NodeViewWrapper className={`gr-code-block ${isMermaid ? 'gr-code-block--diagram' : ''} ${showCode ? '' : 'is-code-hidden'}`}>
       <select
         className="gr-code-block__lang"
         contentEditable={false}
@@ -54,11 +63,57 @@ function CodeBlockView({ node, updateAttributes, editor }: NodeViewProps) {
           </option>
         ))}
       </select>
+      {/* The picture sits above the code: text after the editable code confuses the cursor at its end. */}
+      {isMermaid && (
+        <MermaidPreview
+          code={node.textContent}
+          onBroken={setBroken}
+          onEdit={
+            editor.isEditable
+              ? () => {
+                  // Show the code first: a selection put into hidden text lands somewhere else.
+                  setOpening(true)
+                  window.requestAnimationFrame(() => {
+                    const pos = getPos()
+                    if (typeof pos === 'number') editor.chain().focus().setTextSelection(pos + node.nodeSize - 1).run()
+                    setOpening(false)
+                  })
+                }
+              : undefined
+          }
+        />
+      )}
       <pre>
         <NodeViewContent as={'code' as never} />
       </pre>
     </NodeViewWrapper>
   )
+}
+
+/** Whether the selection sits inside the node at `getPos()` (only tracked when `enabled`). */
+function useCursorInside(editor: NodeViewProps['editor'], getPos: NodeViewProps['getPos'], enabled: boolean): boolean {
+  const [inside, setInside] = useState(false)
+  useEffect(() => {
+    if (!enabled) return
+    const check = () => {
+      const pos = getPos()
+      if (typeof pos !== 'number') return
+      // Read the size from the current document: this runs before React sees the edited node.
+      const size = editor.state.doc.nodeAt(pos)?.nodeSize ?? 0
+      const { from, to } = editor.state.selection
+      setInside(editor.isFocused && from > pos && to < pos + size)
+    }
+    check()
+    editor.on('selectionUpdate', check)
+    editor.on('focus', check)
+    editor.on('blur', check)
+    return () => {
+      editor.off('selectionUpdate', check)
+      editor.off('focus', check)
+      editor.off('blur', check)
+    }
+  }, [editor, getPos, enabled])
+  return inside
 }
 
 const CodeBlock = CodeBlockLowlight.extend({
@@ -78,4 +133,20 @@ export const codeBlock: BlockDef = {
   extensions: [CodeBlock],
   insert: (editor) => editor.chain().focus().toggleCodeBlock().run(),
   isActive: (editor) => editor.isActive('codeBlock'),
+}
+
+export const mermaidDiagram: BlockDef = {
+  id: 'mermaid',
+  label: 'Diagram from text',
+  description: 'A diagram written as text (Mermaid): flowcharts, sequences, timelines, Gantt',
+  icon: Workflow,
+  group: 'media',
+  keywords: ['mermaid', 'diagram', 'flowchart', 'chart', 'sequence', 'gantt', 'timeline', 'graph'],
+  insert: (editor) =>
+    editor
+      .chain()
+      .focus()
+      .insertContent({ type: 'codeBlock', attrs: { language: 'mermaid' }, content: [{ type: 'text', text: 'flowchart LR\n  Idea --> Plan --> Build' }] })
+      .run(),
+  toolbar: false,
 }
