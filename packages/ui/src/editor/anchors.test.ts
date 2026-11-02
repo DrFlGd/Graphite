@@ -1,7 +1,7 @@
 import { getSchema } from '@tiptap/core'
 import { Node as PMNode } from '@tiptap/pm/model'
 import { describe, expect, it } from 'vitest'
-import { blockIdOf, findAnchor } from './anchors'
+import { blockIdOf, findAnchor, outlineOf } from './anchors'
 import { buildMarkdownExtensions } from './extensions'
 import { markdownToDoc } from './markdown'
 
@@ -17,6 +17,20 @@ describe('anchors', () => {
     expect(d.nodeAt(at!)?.textContent).toBe('Power')
     expect(d.nodeAt(findAnchor(d, 'Power#Motors')!)?.textContent).toBe('Motors')
     expect(findAnchor(d, 'Nope')).toBeNull()
+  })
+
+  it('tells same-named headings apart by the headings above them', () => {
+    const n = doc('# A\n\n## Notes\n\none\n\n# B\n\n## Notes\n\ntwo')
+    const second = findAnchor(n, 'B#Notes')!
+    expect(second).toBeGreaterThan(findAnchor(n, 'A#Notes')!)
+    expect(findAnchor(n, 'Notes')).toBe(findAnchor(n, 'A#Notes'))
+    expect(findAnchor(n, 'A#B')).toBeNull()
+    expect(outlineOf(n).map((h) => h.anchor)).toEqual(['A', 'A#Notes', 'B', 'B#Notes'])
+    expect(outlineOf(d).map((h) => [h.level, h.text])).toEqual([
+      [1, 'Robot'],
+      [2, 'Power'],
+      [3, 'Motors'],
+    ])
   })
 
   it('finds blocks by id', () => {

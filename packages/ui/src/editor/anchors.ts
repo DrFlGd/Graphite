@@ -47,21 +47,60 @@ export function findAnchor(doc: PMNode, anchor: string): number | null {
     return found
   }
   const parts = a.split('#').map(norm).filter(Boolean)
-  const want = parts[parts.length - 1]
-  if (!want) return null
+  if (parts.length === 0) return null
+  const headings: { pos: number; level: number; text: string }[] = []
   doc.descendants((node, pos) => {
-    if (found !== null) return false
-    if (node.type.name === 'heading' && norm(node.textContent.replace(BLOCK_ID, '')) === want) found = pos
+    if (node.type.name === 'heading') headings.push({ pos, level: Number(node.attrs.level) || 1, text: norm(node.textContent.replace(BLOCK_ID, '')) })
     return !node.isTextblock
   })
-  return found
+  // `Parts#Motors`: each part is a heading inside the section of the one before.
+  let from = 0
+  let within: number | null = null
+  let hit: (typeof headings)[number] | null = null
+  for (const part of parts) {
+    hit = null
+    for (let i = from; i < headings.length; i++) {
+      const h = headings[i]
+      if (within !== null && h.level <= within) break
+      if (h.text === part) {
+        hit = h
+        from = i + 1
+        within = h.level
+        break
+      }
+    }
+    if (!hit) return null
+  }
+  return hit?.pos ?? null
+}
+
+/** The open note's headings, with the anchor that links to each (`Parts#Motors` when nested). */
+export function outlineOf(doc: PMNode): { level: number; text: string; anchor: string; pos: number }[] {
+  const out: { level: number; text: string; anchor: string; pos: number }[] = []
+  const stack: { level: number; text: string }[] = []
+  doc.forEach((node, pos) => {
+    if (node.type.name !== 'heading') return
+    const level = Number(node.attrs.level) || 1
+    const text = node.textContent.replace(BLOCK_ID, '').trim()
+    if (!text) return
+    while (stack.length && stack[stack.length - 1].level >= level) stack.pop()
+    stack.push({ level, text })
+    out.push({ level, text, anchor: stack.map((s) => s.text).join('#'), pos })
+  })
+  return out
 }
 
 /** Scroll the editor to an anchor and flash it; false when the note has no such heading or block. */
 export function scrollToAnchor(editor: Editor, anchor: string): boolean {
   const pos = findAnchor(editor.state.doc, anchor)
   if (pos === null) return false
-  editor.chain().setTextSelection(pos + 1).run()
+  scrollToPos(editor, pos)
+  return true
+}
+
+/** Put the cursor in the block at `pos`, scroll it into view and flash it. */
+export function scrollToPos(editor: Editor, pos: number) {
+  editor.chain().focus().setTextSelection(pos + 1).run()
   const dom = editor.view.nodeDOM(pos) as HTMLElement | null
   const el = dom && dom.nodeType === 1 ? dom : (editor.view.domAtPos(pos + 1).node as HTMLElement | null)?.parentElement
   if (el) {
@@ -69,7 +108,6 @@ export function scrollToAnchor(editor: Editor, anchor: string): boolean {
     el.classList.add('is-flash')
     window.setTimeout(() => el.classList.remove('is-flash'), 1200)
   }
-  return true
 }
 
 /** A short random block id, six lowercase letters and digits, as Obsidian makes them. */

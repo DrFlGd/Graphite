@@ -11,7 +11,7 @@ import { image } from './image'
 import { file } from './fileEmbed'
 import { noteLink } from './noteLink'
 
-export type { BlockDef, BlockContext, SectionPreview } from './types'
+export type { BlockDef, BlockContext, SectionPreview, SnippetItem } from './types'
 
 /** Every insertable block, in menu order. Add a new block type here. */
 export const BLOCKS: BlockDef[] = [

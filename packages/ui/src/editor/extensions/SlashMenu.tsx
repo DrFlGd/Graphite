@@ -4,6 +4,7 @@ import Suggestion from '@tiptap/suggestion'
 import { createElement } from 'react'
 import { filterBlocks, type BlockContext, type BlockDef } from '../blocks'
 import { suggestionMenu } from './SuggestionMenu'
+import { matchSnippets, snippetBlock } from '../snippets'
 
 export interface SlashMenuOptions {
   context: BlockContext
@@ -11,7 +12,8 @@ export interface SlashMenuOptions {
 
 /**
  * Type `/` at the start of a line (or after a space) to get the block
- * picker. Items come straight from the block registry (C11).
+ * picker. Items come straight from the block registry (C11), followed by
+ * the vault's snippets (C13).
  */
 export const SlashMenu = Extension.create<SlashMenuOptions>({
   name: 'slashMenu',
@@ -29,7 +31,11 @@ export const SlashMenu = Extension.create<SlashMenuOptions>({
         allowSpaces: false,
         startOfLine: false,
         allowedPrefixes: [' ', ''],
-        items: ({ query }) => filterBlocks(query).filter((b) => b.id !== 'paragraph' || query.length > 0),
+        items: async ({ query }) => {
+          const blocks = filterBlocks(query).filter((b) => b.id !== 'paragraph' || query.length > 0)
+          const list = (await this.options.context.listSnippets?.().catch(() => [])) ?? []
+          return [...blocks, ...matchSnippets(list, query).map(snippetBlock)]
+        },
         command: ({ editor, range, props: block }) => {
           editor.chain().focus().deleteRange(range).run()
           void block.insert(editor, this.options.context)

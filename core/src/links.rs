@@ -248,7 +248,7 @@ pub fn extract_links(body: &str) -> Vec<Link> {
 
 /// Yield the segments of `line` that are outside inline code spans, as
 /// `(start_offset, end_offset, text)`.
-fn strip_inline_code(line: &str) -> Vec<(usize, usize, &str)> {
+pub(crate) fn strip_inline_code(line: &str) -> Vec<(usize, usize, &str)> {
     let mut segs = Vec::new();
     let mut start = 0usize;
     let mut i = 0usize;

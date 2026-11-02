@@ -26,6 +26,29 @@ pub struct NoteSummary {
     pub note_type: String,
     pub tags: Vec<String>,
     pub updated: Option<DateTime<Utc>>,
+    /// Front-matter `icon`: an emoji or an icon name, shown in place of the type's icon.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    /// Front-matter `color`: a colour name or `#rrggbb`, used in place of the type's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    /// Front-matter `bookmarked: true`: kept at hand in the sidebar.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub bookmarked: bool,
+}
+
+/// The display hints a note's front-matter can carry (`icon`, `color`,
+/// `bookmarked`), read from its user properties.
+pub fn look(properties: &serde_json::Map<String, serde_json::Value>) -> (Option<String>, Option<String>, bool) {
+    let text = |k: &str| {
+        properties
+            .get(k)
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    };
+    let bookmarked = matches!(properties.get("bookmarked"), Some(serde_json::Value::Bool(true)));
+    (text("icon"), text("color"), bookmarked)
 }
 
 /// A fully loaded note.
@@ -48,6 +71,7 @@ pub struct Note {
 
 impl Note {
     pub fn summary(&self) -> NoteSummary {
+        let (icon, color, bookmarked) = look(&self.properties);
         NoteSummary {
             id: self.id.clone(),
             path: self.path.clone(),
@@ -55,6 +79,9 @@ impl Note {
             note_type: self.note_type.clone(),
             tags: self.tags.clone(),
             updated: self.updated,
+            icon,
+            color,
+            bookmarked,
         }
     }
 

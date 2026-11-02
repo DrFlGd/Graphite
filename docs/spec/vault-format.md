@@ -13,7 +13,8 @@ MyVault/
 ├── attachments/           files; sub-folders by project are a convention, not a rule
 │   └── sources/           imported content (M3): repos, page archives, video
 ├── templates/             the vault's own note and project templates (optional)
-├── canvases/              whiteboards (M5), *.canvas.json
+├── snippets/              reusable bits of text for the editor's / menu (optional)
+├── canvases/              whiteboards (M5), JSON Canvas *.canvas files
 └── .graphite/             Graphite's own state (never synced, never hand-edited)
     ├── devices/<id>/      this device's index.sqlite (rebuildable)
     ├── sync/<id>/         per-note Automerge documents, one folder per device (M4)
@@ -56,11 +57,17 @@ Needs a [[Motor driver]]. depends-on:: [[Battery]]
 | `id` | string (ULID) | Stable identity. Minted by Graphite on first index if missing; this is the only change Graphite makes to a file it did not write. Links resolve by title, so renames do not break them, but the id is what history, sync and external tools use. |
 | `type` | string | `note` (default), `project`, `idea`, `area`, `task`, `gap`, `source`, `asset`, `decision`, `person`, `capture`, `query`, or user-defined. |
 | `title` | string | Display title. Defaults to the file name without `.md`. Only written when it differs from the file name. |
-| `tags` | list of strings | Hierarchy with `/` (`hardware/motors`). |
+| `tags` | list of strings | Hierarchy with `/` (`hardware/motors`). A `#tag` written in the body (outside code, not all digits) tags the note too; the index holds both, and a tag matches the tags under it (`tag:hardware` finds `hardware/motors`). |
 | `aliases` | list of strings | Alternative titles that links may use. |
 | `created`, `updated` | RFC 3339 timestamp | Set by Graphite on create/save. A bare `YYYY-MM-DD` is accepted on read. |
 
-Every other key is a **property** and is preserved verbatim (strings, numbers, booleans, lists, maps). Properties are indexed for queries (M2).
+Every other key is a **property** and is preserved verbatim (strings, numbers, booleans, lists, maps). Properties are indexed for queries (M2). A few properties change how a note is shown, and are ordinary properties otherwise:
+
+| Key | Value | Effect |
+| --- | --- | --- |
+| `icon` | an emoji, or a [Lucide](https://lucide.dev/icons) icon name (`rocket`, `lucide-rocket`) | Shown in place of the type's icon in the sidebar, tabs, search and the side panel. Graphite offers 84 icon names; an unknown name is ignored. |
+| `color` | `red`, `orange`, `yellow`, `green`, `teal`, `blue`, `purple`, `pink`, `brown`, `grey`, or `#rrggbb` | Colours the note's icon in place of the type's colour. |
+| `bookmarked` | `true` | Lists the note under Bookmarks at the top of the sidebar (and first on the phone). |
 
 A file with no front-matter is a valid note (title = file name, type = note); it gains an `id` block the first time Graphite indexes it.
 
@@ -193,6 +200,8 @@ A **project** is a note with `type: project`. Nothing else is required: its task
 A **decision** is a note with `type: decision`, usually with `status` (`proposed`, `accepted`, `rejected`, `superseded`), `date` and `project: "[[Project]]"` properties and `## Context`, `## Options`, `## Outcome` headings. Only the type matters to Graphite.
 
 **Templates** fill a new note. Graphite ships `project`, `research`, `build`, `software`, `writing`, `decision` and `query`. A vault adds or replaces templates with notes under `templates/` whose front-matter has `type: template`; the file name (lower-cased, spaces to `-`) is the template's name. Template front-matter keys with a meaning: `description` (shown in pickers), `for` or `note_type` (the `type` of the note it creates, default `note`), `folder` (where it is created; defaults by type to `notes/Projects`, `notes/Decisions`, `notes/Ideas`, `notes/Queries`, else `notes/`). Every other key becomes a property of the new note. In the body and in property values, `{{title}}`, `{{date}}` (`YYYY-MM-DD`), `{{datetime}}` (RFC 3339) and `{{body}}` are replaced; `{{body}}` is the note's existing text when an idea is promoted to a project (otherwise empty) and is appended at the end when the template has no slot for it.
+
+**Snippets** are reusable bits of Markdown for the editor: any note with `type: snippet`, or any note under `snippets/`. Typing `/` lists them after the blocks (and the toolbar's Insert menu has them too); picking one inserts its body at the cursor, as text when it is one paragraph and as blocks otherwise. `{{title}}` (the note it goes into), `{{date}}` (`YYYY-MM-DD`), `{{time}}` (`HH:MM`) and `{{datetime}}` (RFC 3339) are filled in. A `description` property is shown beside the name; without one, the first line of the body is. "Save the selection as a snippet" in the command palette writes `snippets/<first words>.md`.
 
 Promoting a note to a project changes its `type`, adds the template's properties where the note has none, and wraps its text in the template body. The file stays where it is and keeps its id, so nothing linking to it changes.
 

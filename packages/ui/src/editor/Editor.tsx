@@ -76,6 +76,8 @@ export function NoteEditor(props: NoteEditorProps) {
       loadSection: c.loadSection && ((t: string, a: string | null) => contextRef.current?.loadSection?.(t, a) ?? Promise.resolve(null)),
       followLink: (t: string, a: string | null) => (contextRef.current?.followLink ?? callbacks.current.onFollowLink)?.(t, a),
       embedDepth: c.embedDepth,
+      listSnippets: c.listSnippets && (() => contextRef.current?.listSnippets?.() ?? Promise.resolve([])),
+      renderSnippet: c.renderSnippet && ((id: string) => contextRef.current?.renderSnippet?.(id) ?? Promise.resolve(null)),
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [docKey])

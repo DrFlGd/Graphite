@@ -142,6 +142,40 @@ fn tag_re() -> &'static Regex {
     RE.get_or_init(|| Regex::new(r"(?:^|\s)#(?P<tag>[\w/-]+)").unwrap())
 }
 
+/// `#tags` written in the body (outside code), as Obsidian counts them:
+/// after a space or at the start of a line, letters, digits, `_`, `-` and
+/// `/` for nesting, with at least one character that is not a digit (so
+/// `#1` is not a tag). Headings (`# Title`) are not tags.
+pub fn inline_tags(body: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut fence: Option<&str> = None;
+    for line in body.lines() {
+        let t = line.trim_start();
+        if let Some(f) = fence {
+            if t.starts_with(f) {
+                fence = None;
+            }
+            continue;
+        }
+        if t.starts_with("```") || t.starts_with("~~~") {
+            fence = Some(&t[..3]);
+            continue;
+        }
+        for (_, _, seg) in crate::links::strip_inline_code(line) {
+            for c in tag_re().captures_iter(seg) {
+                let tag = c["tag"].trim_end_matches('/');
+                if tag.is_empty() || tag.chars().all(|ch| ch.is_ascii_digit() || ch == '/' || ch == '-') {
+                    continue;
+                }
+                if !out.iter().any(|x| x.eq_ignore_ascii_case(tag)) {
+                    out.push(tag.to_string());
+                }
+            }
+        }
+    }
+    out
+}
+
 fn heading_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| Regex::new(r"^#{1,6}[ \t]+(?P<text>.+?)[ \t]*#*[ \t]*$").unwrap())
@@ -507,6 +541,12 @@ impl Progress {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inline_tags_skip_code_headings_and_numbers() {
+        let body = "# Title\n\nWork on #garden/beds and #idea.\n- [ ] task #p1\n`#notatag` and #123\n```\n#incode\n```\nSee [[Note#Heading]] and x.y/#frag";
+        assert_eq!(inline_tags(body), vec!["garden/beds", "idea", "p1"]);
+    }
 
     const BODY: &str = "# Garden Robot\n\n## Tasks\n\n- [ ] Order motors due:: 2026-11-01 #p1 #hardware\n  - [x] Compare drivers\n  - [?] Which voltage does the pump need? blocks:: [[Pump]]\n- [/] Build chassis project:: [[Chassis v3]]\n    - [ ] Print brackets\n- [-] Old idea\n\nSome text.\n\n```\n- [ ] not a task, in code\n```\n\n## Open questions\n\n- [?] Is a 12 V supply enough? answered:: [[Power budget]]\n";
 

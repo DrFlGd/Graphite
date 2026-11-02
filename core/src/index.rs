@@ -8,12 +8,21 @@ use serde::{Deserialize, Serialize};
 use crate::assets::{Asset, AssetHit, AssetKind, DerivedState};
 use crate::error::Result;
 use crate::links::{extract_links, extract_property_links, normalise_target, LinkKind};
-use crate::note::{Note, NoteSummary};
+use crate::note::{look, Note, NoteSummary};
 use crate::tasks::{parse_items, Item, ItemKind, ItemStatus};
 use std::collections::HashMap;
 
-/// Bump to rebuild every index (6: links from front-matter properties).
-const SCHEMA_VERSION: i64 = 6;
+/// Bump to rebuild every index (7: inline `#tags` in the body).
+const SCHEMA_VERSION: i64 = 7;
+
+/// Front-matter that changes how a note is shown in lists (see [`look`]).
+const LOOK_SQL: &str = "SELECT note_id, key, value FROM properties WHERE key IN ('icon', 'color', 'bookmarked')";
+
+fn look_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<(String, String, serde_json::Value)> {
+    let v: String = r.get(2)?;
+    let value = serde_json::from_str(&v).unwrap_or(serde_json::Value::String(v));
+    Ok((r.get(0)?, r.get(1)?, value))
+}
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -313,7 +322,13 @@ impl Index {
             size
         ])?;
         let rowid = tx.last_insert_rowid();
-        for t in &note.tags {
+        // Front-matter tags and `#tags` in the text both count.
+        let inline = crate::tasks::inline_tags(&note.body);
+        for t in note.tags.iter().chain(
+            inline
+                .iter()
+                .filter(|t| !note.tags.iter().any(|x| x.eq_ignore_ascii_case(t))),
+        ) {
             tx.prepare_cached("INSERT OR IGNORE INTO tags(note_id, tag) VALUES (?1, ?2)")?
                 .execute(params![note.id, t])?;
         }
@@ -420,10 +435,12 @@ impl Index {
                 r.get::<_, Option<String>>(4)?,
             ))
         })?;
+        let mut looks = self.looks()?;
         let mut out = Vec::new();
         for row in rows {
             let (id, path, title, note_type, updated) = row?;
             let tags = self.tags_of(&id)?;
+            let (icon, color, bookmarked) = looks.remove(&id).map(|p| look(&p)).unwrap_or((None, None, false));
             out.push(NoteSummary {
                 id,
                 path,
@@ -431,7 +448,32 @@ impl Index {
                 note_type,
                 tags,
                 updated: updated.and_then(|u| u.parse().ok()),
+                icon,
+                color,
+                bookmarked,
             });
+        }
+        Ok(out)
+    }
+
+    /// The note's `icon`, `color` and `bookmarked` front-matter.
+    fn look_of(&self, id: &str) -> Result<(Option<String>, Option<String>, bool)> {
+        let mut stmt = self.conn.prepare_cached(&format!("{LOOK_SQL} AND note_id = ?1"))?;
+        let mut props = serde_json::Map::new();
+        for row in stmt.query_map(params![id], look_row)? {
+            let (_, k, v) = row?;
+            props.insert(k, v);
+        }
+        Ok(look(&props))
+    }
+
+    /// `icon`, `color` and `bookmarked` front-matter for every note that has any.
+    fn looks(&self) -> Result<HashMap<String, serde_json::Map<String, serde_json::Value>>> {
+        let mut stmt = self.conn.prepare_cached(LOOK_SQL)?;
+        let mut out: HashMap<String, serde_json::Map<String, serde_json::Value>> = HashMap::new();
+        for row in stmt.query_map([], look_row)? {
+            let (id, k, v) = row?;
+            out.entry(id).or_default().insert(k, v);
         }
         Ok(out)
     }
@@ -464,6 +506,7 @@ impl Index {
         match row {
             Some((id, path, title, note_type, updated)) => {
                 let tags = self.tags_of(&id)?;
+                let (icon, color, bookmarked) = self.look_of(&id)?;
                 Ok(Some(NoteSummary {
                     id,
                     path,
@@ -471,6 +514,9 @@ impl Index {
                     note_type,
                     tags,
                     updated: updated.and_then(|u| u.parse().ok()),
+                    icon,
+                    color,
+                    bookmarked,
                 }))
             }
             None => Ok(None),
@@ -1160,6 +1206,35 @@ mod tests {
         let mut n = Note::parse(path, body).unwrap();
         n.id = id.into();
         n
+    }
+
+    #[test]
+    fn summaries_carry_icon_colour_bookmark_and_inline_tags() {
+        let mut idx = Index::open_in_memory().unwrap();
+        idx.upsert(
+            &note(
+                "A",
+                "notes/a.md",
+                "---\ntags: [garden]\nicon: 🌱\ncolor: green\nbookmarked: true\n---\nSee #garden/beds and #idea.",
+            ),
+            0,
+            0,
+        )
+        .unwrap();
+        idx.upsert(&note("B", "notes/b.md", "---\nbookmarked: \"yes\"\n---\nplain"), 0, 0)
+            .unwrap();
+        let a = idx.summary("A").unwrap().unwrap();
+        assert_eq!(a.icon.as_deref(), Some("🌱"));
+        assert_eq!(a.color.as_deref(), Some("green"));
+        assert!(a.bookmarked);
+        assert_eq!(a.tags, vec!["garden", "garden/beds", "idea"]);
+        let list = idx.list().unwrap();
+        let b = list.iter().find(|n| n.id == "B").unwrap();
+        assert!(!b.bookmarked && b.icon.is_none());
+        assert_eq!(list.iter().find(|n| n.id == "A").unwrap(), &a);
+        // Plain summaries leave the new fields out of the JSON.
+        let json = serde_json::to_value(b).unwrap();
+        assert!(json.get("icon").is_none() && json.get("bookmarked").is_none());
     }
 
     #[test]
