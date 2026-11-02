@@ -21,6 +21,7 @@ const CASES: Record<string, string> = {
   image: '![chassis](attachments/chassis.png)',
   fileEmbed: '![clip.mp4](attachments/clip.mp4)\n\n![spec](attachments/Garden/spec.pdf)',
   fileLink: 'read [the datasheet](attachments/datasheet.csv) first',
+  drawing: '![Wiring](attachments/drawings/Wiring%20loom.excalidraw)',
   encodedPath: '![plan](attachments/Garden%20Robot/plan.png)\n\n![clip](attachments/Garden%20Robot/clip%20one.mp4)',
   divider: 'above\n\n---\n\nbelow',
   wikiLink: 'See [[Garden Robot]] and [[Garden Robot#Power|the power bit]].',
@@ -56,6 +57,12 @@ describe('markdown round-trip', () => {
     expect(doc.content?.[0]?.type).toBe('fileEmbed')
     expect(doc.content?.[0]?.attrs).toEqual({ src: 'attachments/clip.mp4', name: 'clip' })
     expect(doc.content?.[1]?.type).toBe('image')
+  })
+
+  it('parses drawing embeds as file embeds', () => {
+    const doc = markdownToDoc('![Wiring](attachments/drawings/Wiring.excalidraw)')
+    expect(doc.content?.[0]?.type).toBe('fileEmbed')
+    expect(doc.content?.[0]?.attrs).toEqual({ src: 'attachments/drawings/Wiring.excalidraw', name: 'Wiring' })
   })
 
   it('parses wiki links into nodes rather than text', () => {

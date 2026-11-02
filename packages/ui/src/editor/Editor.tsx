@@ -78,6 +78,9 @@ export function NoteEditor(props: NoteEditorProps) {
       embedDepth: c.embedDepth,
       listSnippets: c.listSnippets && (() => contextRef.current?.listSnippets?.() ?? Promise.resolve([])),
       renderSnippet: c.renderSnippet && ((id: string) => contextRef.current?.renderSnippet?.(id) ?? Promise.resolve(null)),
+      newDrawing: c.newDrawing && (() => contextRef.current?.newDrawing?.() ?? Promise.resolve(null)),
+      readDrawing: c.readDrawing && ((src: string) => contextRef.current?.readDrawing?.(src) ?? Promise.reject(new Error('no drawings here'))),
+      openFile: (src: string) => (contextRef.current?.openFile ?? callbacks.current.onOpenFile)?.(src),
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [docKey])

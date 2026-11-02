@@ -11,6 +11,7 @@ MyVault/
 │   ├── Daily/             daily notes (M1, optional)
 │   └── …/*.md
 ├── attachments/           files; sub-folders by project are a convention, not a rule
+│   ├── drawings/          drawings made in Graphite, Excalidraw *.excalidraw files (0.4)
 │   └── sources/           imported content (M3): repos, page archives, video
 ├── templates/             the vault's own note and project templates (optional)
 ├── snippets/              reusable bits of text for the editor's / menu (optional)
@@ -28,7 +29,7 @@ MyVault/
 Rules:
 
 - Every `*.md` file anywhere under the root (except under `.graphite/`) is a note. Folders are for humans; they carry no semantics beyond the default `notes/` for new notes and `notes/Inbox/` for captures.
-- Every other file is an asset if it is referenced from a note or lives under `attachments/`. Assets are never modified by Graphite.
+- Every other file is an asset if it is referenced from a note or lives under `attachments/`. Assets are never modified by Graphite, except drawings (`*.excalidraw`), which its drawing editor saves into.
 - Hidden files and folders (dot-prefixed) are ignored.
 
 ## Notes
@@ -130,6 +131,14 @@ The editor writes these in the syntax Obsidian, GitHub and Pandoc already read, 
 | fenced code with language `mermaid` | A Mermaid diagram (flowchart, sequence, Gantt, timeline and so on), shown as a picture with the code underneath while editing. |
 | `[^1]` in text, `[^1]: text` on its own line | Footnote. Labels may be numbers or words. Definitions that follow one another stay on adjacent lines; an indented line continues the definition above it. New footnotes are numbered one past the highest number in the note and added after the last definition. |
 | `==text==` | Highlighted text. |
+
+### Drawings (0.4)
+
+A drawing is an Excalidraw scene saved as a plain `.excalidraw` file: the same JSON that excalidraw.com and the Obsidian Excalidraw plugin's "export to file" open. Graphite starts new ones under `attachments/drawings/` (any folder works) and a note shows one with the ordinary embed syntax, `![Wiring](attachments/drawings/Wiring.excalidraw)` or `![[Wiring.excalidraw]]`, drawn as a picture that opens the editor when clicked. The editor writes the whole file on each save (replacing it in one step), keeps the `"type": "excalidraw"` envelope with its `elements`, `appState` and `files` (pasted images, as data URLs), and refuses anything else. The text in a drawing's text elements is indexed, so a drawing turns up in search by the words in it. Drawings sync as assets, not as notes: if two devices change the same drawing between passes, one version wins and the other is kept beside it as a conflicted copy, and there is no version history.
+
+### Canvases (M5)
+
+Whiteboards will be stored in the open [JSON Canvas](https://jsoncanvas.org/) 1.0 format (`*.canvas`, by default under `canvases/`), which Obsidian also reads and writes. Graphite keeps to the published spec: `nodes` (`text` with Markdown, `file` with a vault-relative path and an optional `subpath` such as `#Heading`, `link` with a URL, `group`) and `edges`, positions and sizes in pixels, colours as `"1"` to `"6"` or `#rrggbb`. Anything Graphite needs beyond that goes in extra keys prefixed `graphite`, which other readers ignore. Until M5 ships, `.canvas` files are assets of kind `data`.
 
 ### Assets (M3)
 

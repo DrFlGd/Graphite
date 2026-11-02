@@ -1,26 +1,36 @@
 import { Node, mergeAttributes } from '@tiptap/core'
 import { NodeViewWrapper, ReactNodeViewRenderer, type NodeViewProps } from '@tiptap/react'
-import { Box, FileText, Music, Paperclip, Video } from 'lucide-react'
-import type { BlockDef } from './types'
+import { Box, FileText, Music, Paperclip, PenTool, Video } from 'lucide-react'
+import type { BlockContext, BlockDef } from './types'
+import { DrawingPreview } from '../drawing/DrawingPreview'
 import { insertAttachments } from '../attachments'
 import { embedKind, extOf } from '../fileKinds'
 
 export interface FileEmbedOptions {
   /** Map a Markdown src (usually a vault-relative path) to something the webview can load. */
   resolveSrc?: (src: string) => string
+  /** Host callbacks; `readDrawing` turns drawing embeds into pictures. */
+  context?: BlockContext
 }
 
 function FileEmbedView({ node, extension, selected }: NodeViewProps) {
   const src = String(node.attrs.src ?? '')
   const name = String(node.attrs.name ?? '') || src.split('/').pop() || src
-  const resolve = (extension.options as FileEmbedOptions).resolveSrc ?? ((s: string) => s)
+  const opts = extension.options as FileEmbedOptions
+  const resolve = opts.resolveSrc ?? ((s: string) => s)
+  const readDrawing = opts.context?.readDrawing
   const kind = embedKind(src)
-  const Icon = kind === 'video' ? Video : kind === 'audio' ? Music : kind === 'pdf' ? FileText : kind === 'model' ? Box : Paperclip
+  const Icon = kind === 'video' ? Video : kind === 'audio' ? Music : kind === 'pdf' ? FileText : kind === 'model' ? Box : kind === 'drawing' ? PenTool : Paperclip
   return (
     <NodeViewWrapper className={`gr-file-embed gr-file-embed--${kind} ${selected ? 'is-selected' : ''}`} data-file-embed="" data-src={src} contentEditable={false}>
       {kind === 'video' && <video className="gr-file-embed__media" controls preload="metadata" src={resolve(src)} />}
       {kind === 'audio' && <audio className="gr-file-embed__media" controls preload="metadata" src={resolve(src)} />}
-      <button type="button" className="gr-file-embed__card" title={`Open ${name}`} data-file-open="">
+      {kind === 'drawing' && readDrawing && (
+        <div className="gr-file-embed__drawing" data-file-open="" title={`Open ${name} to draw`}>
+          <DrawingPreview src={src} read={readDrawing} />
+        </div>
+      )}
+      <button type="button" className="gr-file-embed__card" title={kind === 'drawing' ? `Open ${name} to draw` : `Open ${name}`} data-file-open="">
         <Icon size={16} />
         <span className="gr-file-embed__name">{name}</span>
         <span className="gr-file-embed__ext">{extOf(src).toUpperCase()}</span>
@@ -43,7 +53,7 @@ export const FileEmbed = Node.create<FileEmbedOptions>({
   selectable: true,
 
   addOptions() {
-    return { resolveSrc: (s: string) => s }
+    return { resolveSrc: (s: string) => s, context: {} }
   },
 
   addAttributes() {

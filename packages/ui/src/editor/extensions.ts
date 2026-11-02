@@ -41,7 +41,7 @@ export function buildExtensions(opts: EditorExtensionOptions = {}): AnyExtension
     Highlight,
     WikiLink.configure({ context: opts.blockContext ?? {}, resolveSrc: opts.resolveSrc }),
     VaultImage.configure({ resolveSrc: opts.resolveSrc, inline: false, allowBase64: false }),
-    FileEmbed.configure({ resolveSrc: opts.resolveSrc }),
+    FileEmbed.configure({ resolveSrc: opts.resolveSrc, context: opts.blockContext ?? {} }),
     ...blockExtensions().filter((e) => e.name !== 'fileEmbed'),
   ]
   if (opts.headless) return base

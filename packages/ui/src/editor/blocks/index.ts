@@ -9,6 +9,7 @@ import { footnote } from './footnote'
 import { table } from './table'
 import { image } from './image'
 import { file } from './fileEmbed'
+import { drawing } from './drawing'
 import { noteLink } from './noteLink'
 
 export type { BlockDef, BlockContext, SectionPreview, SnippetItem } from './types'
@@ -29,6 +30,7 @@ export const BLOCKS: BlockDef[] = [
   table,
   image,
   file,
+  drawing,
   mermaidDiagram,
   mathBlock,
   mathInline,

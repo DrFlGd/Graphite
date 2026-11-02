@@ -26,6 +26,8 @@ export interface BlockDef {
   isActive?: (editor: Editor) => boolean
   /** Hide from the toolbar (still in the `/` menu). */
   toolbar?: boolean
+  /** Whether this host can insert the block (default yes); a phone has no drawing editor, say. */
+  available?: (ctx: BlockContext) => boolean
 }
 
 /** Host-provided callbacks a block may need (file pickers, note lookup). */
@@ -49,6 +51,12 @@ export interface BlockContext {
   listSnippets?: () => Promise<SnippetItem[]>
   /** A snippet's Markdown with its placeholders filled in for this note. */
   renderSnippet?: (id: string) => Promise<string | null>
+  /** Start a new drawing file; resolves to its Markdown src, or null. */
+  newDrawing?: () => Promise<string | null>
+  /** A drawing file's JSON, for its picture in the note. */
+  readDrawing?: (src: string) => Promise<string>
+  /** Open a file (a drawing to edit it) in the host's own view. */
+  openFile?: (src: string) => void
 }
 
 /** A reusable bit of Markdown kept in the vault (`snippets/*.md`). */

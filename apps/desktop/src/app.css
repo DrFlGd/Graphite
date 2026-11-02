@@ -422,6 +422,12 @@ kbd { font-family: var(--gr-mono); font-size: 0.85em; background: var(--gr-bg-su
 
 /* Asset view: one file with its preview and details */
 .asset { height: 100%; display: flex; flex-direction: column; min-height: 0; }
+.drawing { height: 100%; display: flex; flex-direction: column; min-height: 0; }
+.drawing__header { display: flex; align-items: center; gap: 10px; padding: 10px 20px; border-bottom: 1px solid var(--gr-border); flex-wrap: wrap; }
+.drawing__header h2 { margin: 0; font-size: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40vw; }
+.drawing__path { flex: 1; min-width: 0; font-size: 12px; color: var(--gr-fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drawing__header .btn { padding: 5px 10px; font-size: 13px; display: inline-flex; align-items: center; gap: 5px; }
+.drawing__canvas { flex: 1; min-height: 0; position: relative; }
 .asset__header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 24px 10px; flex-wrap: wrap; border-bottom: 1px solid var(--gr-border); }
 .asset__title { display: flex; align-items: baseline; gap: 10px; min-width: 0; flex-wrap: wrap; }
 .asset__title h2 { margin: 0; font-size: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 50vw; }

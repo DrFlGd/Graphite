@@ -1,4 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
+import { DrawingView } from './DrawingView'
 import { Copy, ExternalLink, FilePlus2, FolderOpen, RefreshCw } from 'lucide-react'
 import { encodeSrc } from '@graphite/ui'
 import { api, assetUrl, type Asset, type Backlink, type Tools } from '../api'
@@ -41,7 +42,13 @@ const TEXT_EXTS = ['csv', 'tsv', 'json', 'jsonl', 'yaml', 'yml', 'xml', 'txt', '
  * the notes that reference it. Files are never modified from here; Open
  * and Reveal hand them to the OS.
  */
-export function AssetView({ path, vaultRoot, page, version, onOpenNote, onNoteCreated, onError }: Props) {
+export function AssetView(props: Props) {
+  // A drawing opens in the drawing editor rather than as a file preview.
+  if (/\.excalidraw$/i.test(props.path)) return <DrawingView key={props.path} path={props.path} onError={props.onError} />
+  return <FileView {...props} />
+}
+
+function FileView({ path, vaultRoot, page, version, onOpenNote, onNoteCreated, onError }: Props) {
   const [asset, setAsset] = useState<Asset | null>(null)
   const [refs, setRefs] = useState<Backlink[]>([])
   const [text, setText] = useState<string | null>(null)

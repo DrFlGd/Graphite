@@ -55,7 +55,7 @@ impl AssetKind {
             "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "avif" | "heic" | "heif" | "tif" | "tiff" | "ico" => {
                 AssetKind::Image
             }
-            "svg" | "ai" | "eps" | "dxf" => AssetKind::Vector,
+            "svg" | "ai" | "eps" | "dxf" | "excalidraw" => AssetKind::Vector,
             "mp4" | "m4v" | "mov" | "webm" | "mkv" | "avi" | "mpg" | "mpeg" | "ogv" => AssetKind::Video,
             "mp3" | "m4a" | "wav" | "flac" | "ogg" | "oga" | "aac" | "opus" | "aiff" => AssetKind::Audio,
             "pdf" => AssetKind::Pdf,
@@ -818,6 +818,19 @@ impl Vault {
                 if tools.ffmpeg && asset.ext != "gif" && (thumb_abs.exists() || make_thumb(&abs_str, &thumb_abs, None))
                 {
                     asset.thumbnail = Some(rel_derived(&format!("{key}.jpg")));
+                }
+            }
+            AssetKind::Vector if asset.ext == crate::drawings::DRAWING_EXT => {
+                // A drawing's words are searchable like a document's.
+                if (asset.size as u64) <= MAX_TEXT_BYTES {
+                    if let Some(text) = fs::read_to_string(abs)
+                        .ok()
+                        .and_then(|s| crate::drawings::drawing_text(&s))
+                    {
+                        if !text.is_empty() && fs::write(&text_abs, text).is_ok() {
+                            asset.text = Some(rel_derived(&format!("{key}.txt")));
+                        }
+                    }
                 }
             }
             AssetKind::Code | AssetKind::Data | AssetKind::Document => {
