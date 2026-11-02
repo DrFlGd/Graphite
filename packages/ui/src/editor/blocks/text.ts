@@ -33,10 +33,10 @@ export const heading3 = heading(3, Heading3)
 export const blockquote: BlockDef = {
   id: 'blockquote',
   label: 'Quote',
-  description: 'Callout or quoted text',
+  description: 'Quoted text',
   icon: Quote,
   group: 'text',
-  keywords: ['callout', 'note', 'cite'],
+  keywords: ['quote', 'cite', 'blockquote'],
   shortcut: 'Ctrl+Shift+B',
   insert: (editor) => editor.chain().focus().toggleBlockquote().run(),
   isActive: (editor) => editor.isActive('blockquote'),

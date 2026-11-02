@@ -2,6 +2,8 @@ import type { AnyExtension } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
 import { Markdown } from '@tiptap/markdown'
+import './escapes'
+import Highlight from '@tiptap/extension-highlight'
 import { blockExtensions, type BlockContext } from './blocks'
 import { VaultImage } from './blocks/image'
 import { FileEmbed } from './blocks/fileEmbed'
@@ -35,6 +37,7 @@ export function buildExtensions(opts: EditorExtensionOptions = {}): AnyExtension
       link: { openOnClick: false, autolink: true },
     }),
     Markdown,
+    Highlight,
     WikiLink,
     VaultImage.configure({ resolveSrc: opts.resolveSrc, inline: false, allowBase64: false }),
     FileEmbed.configure({ resolveSrc: opts.resolveSrc }),

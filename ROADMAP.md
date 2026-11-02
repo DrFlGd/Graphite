@@ -26,9 +26,10 @@ Graphite is a local-first, cross-platform (desktop first, phone second) second b
 | M2 | Projects & Progress | Projects, tasks, subtasks, gaps/information needs, task tracker and board views | |
 | M3 | Media & Importers | Attach any file, previews for images/video/PDF/3D, importers for GitHub, web pages and video with update checks | |
 | M4 | Sync & Mobile | CRDT sync between instances; phone app for capture, reading and task updates | |
+| 0.4 | Borrowed features (2026-11-02) | From a comparison with Alexandrie and Obsidian: callouts, maths, Mermaid, footnotes, highlights, snippets, per-note icon and colour, block links and section embeds, hover previews, outline, bookmarks, tag tree, drawings, dictation, OCR for scanned PDFs (A8, B11, C10, C13–C17, E11, H3) | accepted |
 | M5 | Views & Whiteboard | Whiteboard/canvas, timeline, and saved queries that drive any view | |
 | M6 | Integrations & Plugins | "Open in" / file-watch round-trips with CAD, 3D and vector tools; plugin API; browser clipper; share sheet | |
-| M7 | Intelligence | Full-text + semantic search, ask-your-vault assistant, transcription/OCR, resurfacing | |
+| M7 | Intelligence | Full-text + semantic search, ask-your-vault assistant, transcription/OCR, resurfacing; a local LLM on the self-hosted server whose edits are reviewed proposals (H9) | |
 | M8 | Hardening & Release | Encryption at rest, backups, performance on large vaults, packaging, docs, 1.0 |
 
 The order is the recommended one; M4 (sync/mobile) can move earlier if phone capture is more important than media importers, and M7 can be pulled forward piece by piece (full-text search in particular belongs in M1). See `03-milestones.md` for what each milestone can shed.

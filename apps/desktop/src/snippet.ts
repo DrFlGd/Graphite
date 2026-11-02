@@ -14,8 +14,9 @@ function stripMarkdown(s: string): string {
     .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1') // [text](url), ![alt](src)
     .replace(/^\s{0,3}#{1,6}\s+/gm, '') // headings
     .replace(/^\s*>\s?/gm, '') // quotes
+    .replace(/\[![\w-]+\][+-]?\s*/g, '') // callout markers
     .replace(/^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX/-]\]\s+)?/gm, '') // list and task markers
-    .replace(/(\*\*|__|~~|`)/g, '') // bold, strike, code
+    .replace(/(\*\*|__|~~|==|`)/g, '') // bold, strike, highlight, code
     .replace(/(^|\W)[*_](\S[^*_]*)[*_](?=\W|$)/g, '$1$2') // italics
     .replace(/\s+/g, ' ')
 }

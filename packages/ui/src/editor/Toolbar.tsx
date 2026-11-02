@@ -1,7 +1,7 @@
 import type { Editor } from '@tiptap/core'
 import { useEditorState } from '@tiptap/react'
-import { Bold, Italic, Strikethrough, Code, Link, Undo2, Redo2 } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { Bold, Italic, Strikethrough, Code, Highlighter, Link, Undo2, Redo2, Plus } from 'lucide-react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { BLOCKS, type BlockContext } from './blocks'
 
 interface ToolbarProps {
@@ -24,6 +24,7 @@ const MARKS: MarkButton[] = [
   { id: 'bold', label: 'Bold', icon: Bold, shortcut: 'Ctrl+B', run: (e) => e.chain().focus().toggleBold().run(), isActive: (e) => e.isActive('bold') },
   { id: 'italic', label: 'Italic', icon: Italic, shortcut: 'Ctrl+I', run: (e) => e.chain().focus().toggleItalic().run(), isActive: (e) => e.isActive('italic') },
   { id: 'strike', label: 'Strikethrough', icon: Strikethrough, shortcut: 'Ctrl+Shift+S', run: (e) => e.chain().focus().toggleStrike().run(), isActive: (e) => e.isActive('strike') },
+  { id: 'highlight', label: 'Highlight', icon: Highlighter, shortcut: 'Ctrl+Shift+H', run: (e) => e.chain().focus().toggleHighlight().run(), isActive: (e) => e.isActive('highlight') },
   { id: 'code', label: 'Inline code', icon: Code, shortcut: 'Ctrl+E', run: (e) => e.chain().focus().toggleCode().run(), isActive: (e) => e.isActive('code') },
   {
     id: 'link',
@@ -83,8 +84,70 @@ export function Toolbar({ editor, context, trailing }: ToolbarProps) {
             </ToolButton>
           )
         })}
+        <MoreBlocks editor={editor} context={context} />
       </div>
       {trailing && <div className="gr-toolbar__group gr-toolbar__trailing">{trailing}</div>}
+    </div>
+  )
+}
+
+/** The blocks that have no toolbar button of their own, behind one "Insert" button. */
+function MoreBlocks({ editor, context }: { editor: Editor; context: BlockContext }) {
+  const [open, setOpen] = useState(false)
+  const [at, setAt] = useState<{ top: number; left: number }>({ top: 0, left: 0 })
+  const root = useRef<HTMLDivElement>(null)
+  const extra = BLOCKS.filter((b) => b.toolbar === false && b.id !== 'paragraph')
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: MouseEvent) => {
+      if (!root.current?.contains(e.target as Node)) setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    window.addEventListener('mousedown', onDown)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('mousedown', onDown)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+  if (extra.length === 0) return null
+  return (
+    <div className="gr-more" ref={root}>
+      <ToolButton
+        label="Insert"
+        active={open}
+        onClick={() => {
+          // The toolbar scrolls sideways, which would clip a menu inside it, so the menu is fixed to the window.
+          const r = root.current?.getBoundingClientRect()
+          if (r) setAt({ top: r.bottom + 4, left: Math.max(8, Math.min(r.left, window.innerWidth - 328)) })
+          setOpen((o) => !o)
+        }}
+      >
+        <Plus size={16} />
+      </ToolButton>
+      {open && (
+        <div className="gr-more__menu" role="menu" style={{ top: at.top, left: at.left }}>
+          {extra.map((b) => (
+            <button
+              key={b.id}
+              type="button"
+              role="menuitem"
+              className="gr-more__item"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                setOpen(false)
+                void b.insert(editor, context)
+              }}
+            >
+              <b.icon size={16} />
+              <span className="gr-more__label">{b.label}</span>
+              <span className="gr-more__desc">{b.description}</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

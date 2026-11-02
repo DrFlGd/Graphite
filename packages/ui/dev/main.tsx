@@ -17,6 +17,25 @@ See [[Chassis v3]] and [[Motor driver|the driver]].
 \`\`\`python
 WHEEL_DIAMETER_MM = 65
 \`\`\`
+
+> [!tip] Water first
+> Check the ==pump== before the motors.
+
+> [!warning]- Mains voltage
+> Unplug it before opening the case.
+
+Wheel speed is $v = \\omega r$, so at 2 rev/s it moves about 0.4 m/s.[^1]
+
+$$
+\\int_0^{T} P(t)\\,dt \\le E_{battery}
+$$
+
+\`\`\`mermaid
+flowchart LR
+  Sensor --> Controller --> Pump
+\`\`\`
+
+[^1]: Measured on the bench, 2026-10-12.
 `
 
 const NOTES = ['Garden Robot', 'Chassis v3', 'Motor driver', 'Battery', 'Solar still']

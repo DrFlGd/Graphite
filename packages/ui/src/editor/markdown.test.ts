@@ -29,6 +29,16 @@ const CASES: Record<string, string> = {
   typedLink: 'depends-on:: [[Battery]]',
   inlineMarks: 'some **bold**, *italic*, `code` and ~~gone~~ text',
   webLink: 'a [site](https://example.com) here',
+  highlight: 'a ==marked== word',
+  mathInline: 'Energy is $E = mc^2$ here.',
+  mathBlock: 'Before\n\n$$\n\\int_0^1 x^2 \\, dx = \\frac{1}{3}\n$$\n\nafter',
+  mermaid: '```mermaid\nflowchart LR\n  A --> B\n```',
+  callout: '> [!tip] Water first\n> Check the pump before the motors.',
+  calloutFolded: '> [!warning]- Mains voltage\n> Unplug it.\n>\n> - [ ] buy a fuse',
+  calloutNoTitle: '> [!note]\n> Just a note.',
+  calloutNested: '> [!question] Why?\n> > [!info] Because\n> > It was cheaper.',
+  escapedDollars: 'Not maths: \\$x$ stays text',
+  footnotes: 'A claim[^1] and another[^src].\n\n[^1]: The first source.\n[^src]: A named one with [[Garden Robot]].',
 }
 
 describe('markdown round-trip', () => {
@@ -68,6 +78,27 @@ describe('markdown round-trip', () => {
     expect(list?.content?.[0].content?.[0].content?.[0].text).toBe('why')
     const fence = '```\n- [?] not a task\n```'
     expect(roundTrip(fence).trim()).toBe(fence)
+  })
+
+  it('keeps prices as text, not maths', () => {
+    const md = 'It costs $5 and $10 today.'
+    const doc = markdownToDoc(md)
+    expect(JSON.stringify(doc)).not.toContain('mathInline')
+    expect(roundTrip(md).trim()).toBe(md)
+  })
+
+  it('parses callout fields', () => {
+    const doc = markdownToDoc('> [!Warning]- Hot\n> body')
+    expect(doc.content?.[0]?.type).toBe('callout')
+    expect(doc.content?.[0]?.attrs).toEqual({ kind: 'Warning', fold: '-', title: 'Hot' })
+    expect(markdownToDoc('> plain quote').content?.[0]?.type).toBe('blockquote')
+  })
+
+  it('parses footnote references and definitions', () => {
+    const doc = markdownToDoc('x[^1]\n\n[^1]: note')
+    expect(doc.content?.[0]?.content?.[1]).toEqual({ type: 'footnoteRef', attrs: { label: '1' } })
+    expect(doc.content?.[1]?.type).toBe('footnotes')
+    expect(doc.content?.[1]?.content?.[0]?.attrs).toEqual({ label: '1' })
   })
 
   it('leaves code untouched', () => {
