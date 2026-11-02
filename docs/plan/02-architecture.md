@@ -48,7 +48,7 @@ MyVault/
 │   ├── Garden Robot/chassis-v3.step.preview.glb   # derived, regenerable
 │   ├── _shared/datasheet-bme280.pdf
 │   └── sources/github/octocat~hello-world/        # cloned repo
-├── canvases/Garden Robot layout.canvas.json
+├── canvases/Garden Robot layout.canvas
 └── .graphite/
     ├── index.sqlite                       # FTS5, properties, links, embeddings
     ├── crdt/                              # per-note CRDT docs + sync log

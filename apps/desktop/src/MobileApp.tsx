@@ -14,6 +14,7 @@ import { TypeIcon } from './noteTypes'
 import { syncSummary } from './components/sync'
 import { snippetText } from './snippet'
 import { snippetContext } from './insertSnippets'
+import { drawingContext } from './drawings'
 
 type Tab = 'inbox' | 'notes' | 'tasks' | 'projects'
 
@@ -291,6 +292,8 @@ export function MobileApp() {
       loadSection,
       followLink: (t, anchor) => void followLinkRef.current(t, anchor),
       ...snippetContext(() => openTitleRef.current),
+      // Drawings show as pictures; drawing needs a desktop.
+      readDrawing: drawingContext.readDrawing,
     }),
     [],
   )

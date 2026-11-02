@@ -7,6 +7,7 @@ import { TypeChip, datedDailyTitle } from '../noteTypes'
 import { HistoryPanel } from './HistoryPanel'
 import { loadSection } from '../sections'
 import { snippetContext } from '../insertSnippets'
+import { drawingContext } from '../drawings'
 import { LookPicker } from './LookPicker'
 import { lookOf } from '../noteTypes'
 
@@ -103,7 +104,7 @@ export function NotePane({ note, saveState, onChange, onFollowLink, jump, onOpen
           onOpenUrl={onOpenUrl}
           searchNotes={searchNotes}
           resolveSrc={resolveSrc}
-          blockContext={{ pickImage, pickFile, loadSection, followLink: (t, a) => onFollowLink(t, a), ...snippetContext(() => note.title) }}
+          blockContext={{ pickImage, pickFile, loadSection, followLink: (t, a) => onFollowLink(t, a), ...snippetContext(() => note.title), ...drawingContext }}
           onReady={onEditorReady}
           onFiles={onFiles}
           autofocus

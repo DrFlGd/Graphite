@@ -699,6 +699,21 @@ fn save_snippet(state: State<AppState>, name: String, body: String) -> CmdResult
 }
 
 #[tauri::command]
+fn new_drawing(state: State<AppState>, name: Option<String>) -> CmdResult<String> {
+    with_vault(&state, |v| v.new_drawing(name.as_deref()))
+}
+
+#[tauri::command]
+fn read_drawing(state: State<AppState>, path: String) -> CmdResult<String> {
+    with_vault(&state, |v| v.read_drawing(&path))
+}
+
+#[tauri::command]
+fn write_drawing(state: State<AppState>, path: String, json: String) -> CmdResult<()> {
+    with_vault(&state, |v| v.write_drawing(&path, &json))
+}
+
+#[tauri::command]
 fn promote_to_project(state: State<AppState>, id: String, template: Option<String>) -> CmdResult<Note> {
     with_vault(&state, |v| v.promote_to_project(&id, template.as_deref()))
 }
@@ -1078,6 +1093,9 @@ pub fn run() {
             snippets,
             render_snippet,
             save_snippet,
+            new_drawing,
+            read_drawing,
+            write_drawing,
             complete_title,
             rebuild_index,
             assets,

@@ -3,17 +3,20 @@
 export const VIDEO_EXTS = ['mp4', 'm4v', 'mov', 'webm', 'mkv', 'ogv']
 export const AUDIO_EXTS = ['mp3', 'm4a', 'wav', 'flac', 'ogg', 'oga', 'aac', 'opus']
 export const MODEL_EXTS = ['gltf', 'glb', 'obj', 'stl', 'ply', '3mf', 'step', 'stp', 'iges', 'igs', 'fbx']
+/** Drawings made in Graphite's Excalidraw editor. */
+export const DRAWING_EXTS = ['excalidraw']
 
 export const extOf = (src: string): string => src.split(/[?#]/)[0].split('.').pop()?.toLowerCase() ?? ''
 
 /** The kind of inline preview a file embed gets. */
-export type EmbedKind = 'video' | 'audio' | 'pdf' | 'model' | 'file'
+export type EmbedKind = 'video' | 'audio' | 'pdf' | 'model' | 'drawing' | 'file'
 export function embedKind(src: string): EmbedKind {
   const ext = extOf(src)
   if (VIDEO_EXTS.includes(ext)) return 'video'
   if (AUDIO_EXTS.includes(ext)) return 'audio'
   if (ext === 'pdf') return 'pdf'
   if (MODEL_EXTS.includes(ext)) return 'model'
+  if (DRAWING_EXTS.includes(ext)) return 'drawing'
   return 'file'
 }
 

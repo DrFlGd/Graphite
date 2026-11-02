@@ -97,7 +97,7 @@ function MoreBlocks({ editor, context }: { editor: Editor; context: BlockContext
   const [open, setOpen] = useState(false)
   const [at, setAt] = useState<{ top: number; left: number }>({ top: 0, left: 0 })
   const root = useRef<HTMLDivElement>(null)
-  const extra = BLOCKS.filter((b) => b.toolbar === false && b.id !== 'paragraph')
+  const extra = BLOCKS.filter((b) => b.toolbar === false && b.id !== 'paragraph' && (b.available?.(context) ?? true))
   const [snippets, setSnippets] = useState<SnippetItem[]>([])
   useEffect(() => {
     if (!open || !context.listSnippets) return

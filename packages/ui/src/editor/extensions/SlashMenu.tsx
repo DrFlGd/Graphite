@@ -32,7 +32,8 @@ export const SlashMenu = Extension.create<SlashMenuOptions>({
         startOfLine: false,
         allowedPrefixes: [' ', ''],
         items: async ({ query }) => {
-          const blocks = filterBlocks(query).filter((b) => b.id !== 'paragraph' || query.length > 0)
+          const ctx = this.options.context
+          const blocks = filterBlocks(query).filter((b) => (b.id !== 'paragraph' || query.length > 0) && (b.available?.(ctx) ?? true))
           const list = (await this.options.context.listSnippets?.().catch(() => [])) ?? []
           return [...blocks, ...matchSnippets(list, query).map(snippetBlock)]
         },
