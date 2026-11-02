@@ -8,6 +8,7 @@ import { HistoryPanel } from './HistoryPanel'
 import { loadSection } from '../sections'
 import { snippetContext } from '../insertSnippets'
 import { drawingContext } from '../drawings'
+import { dictationHost } from '../dictation'
 import { LookPicker } from './LookPicker'
 import { lookOf } from '../noteTypes'
 
@@ -104,7 +105,7 @@ export function NotePane({ note, saveState, onChange, onFollowLink, jump, onOpen
           onOpenUrl={onOpenUrl}
           searchNotes={searchNotes}
           resolveSrc={resolveSrc}
-          blockContext={{ pickImage, pickFile, loadSection, followLink: (t, a) => onFollowLink(t, a), ...snippetContext(() => note.title), ...drawingContext }}
+          blockContext={{ pickImage, pickFile, loadSection, followLink: (t, a) => onFollowLink(t, a), ...snippetContext(() => note.title), ...drawingContext, dictation: dictationHost(onError ?? (() => {})) }}
           onReady={onEditorReady}
           onFiles={onFiles}
           autofocus

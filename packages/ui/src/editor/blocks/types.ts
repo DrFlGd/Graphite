@@ -1,5 +1,6 @@
 import type { AnyExtension, Editor } from '@tiptap/core'
 import type { LucideIcon } from 'lucide-react'
+import type { DictationHost } from '../dictation'
 
 /**
  * One insertable block type. The toolbar, the `/` menu and the keyboard
@@ -57,6 +58,8 @@ export interface BlockContext {
   readDrawing?: (src: string) => Promise<string>
   /** Open a file (a drawing to edit it) in the host's own view. */
   openFile?: (src: string) => void
+  /** Speech to text on the device; the toolbar shows a Dictate button when set. */
+  dictation?: DictationHost
 }
 
 /** A reusable bit of Markdown kept in the vault (`snippets/*.md`). */

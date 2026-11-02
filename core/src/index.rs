@@ -12,8 +12,9 @@ use crate::note::{look, Note, NoteSummary};
 use crate::tasks::{parse_items, Item, ItemKind, ItemStatus};
 use std::collections::HashMap;
 
-/// Bump to rebuild every index (7: inline `#tags` in the body).
-const SCHEMA_VERSION: i64 = 7;
+/// Bump to rebuild every index (8: assets derived again, for drawing text
+/// and the text of scanned PDFs).
+const SCHEMA_VERSION: i64 = 8;
 
 /// Front-matter that changes how a note is shown in lists (see [`look`]).
 const LOOK_SQL: &str = "SELECT note_id, key, value FROM properties WHERE key IN ('icon', 'color', 'bookmarked')";

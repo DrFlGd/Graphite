@@ -190,6 +190,9 @@ pub struct Tools {
     pub deno: bool,
     /// A Chromium-based browser for page screenshots.
     pub browser: bool,
+    /// Tesseract, for the text of scanned PDFs.
+    #[serde(default)]
+    pub tesseract: bool,
 }
 
 static TOOLS: RwLock<Option<Tools>> = RwLock::new(None);
@@ -209,6 +212,7 @@ pub fn tools() -> Tools {
         yt_dlp: find_tool("yt-dlp").is_some(),
         deno: find_tool("deno").is_some(),
         browser: crate::sources::browser_binary().is_some(),
+        tesseract: find_tool("tesseract").is_some(),
     };
     *TOOLS.write().unwrap_or_else(|e| e.into_inner()) = Some(t);
     t
@@ -242,7 +246,11 @@ pub fn find_tool(name: &str) -> Option<PathBuf> {
         vec![name.to_string()]
     };
     let path = std::env::var_os("PATH").unwrap_or_default();
-    for dir in std::env::split_paths(&path).chain(tools_dir()) {
+    // Tesseract's Windows installer does not add itself to the PATH.
+    let installed = (cfg!(windows) && name == "tesseract")
+        .then(|| std::env::var_os("ProgramFiles").map(|p| PathBuf::from(p).join("Tesseract-OCR")))
+        .flatten();
+    for dir in std::env::split_paths(&path).chain(tools_dir()).chain(installed) {
         for n in &names {
             let p = dir.join(n);
             if p.is_file() {
@@ -789,6 +797,22 @@ impl Vault {
                         asset.text = Some(rel_derived(&format!("{key}.txt")));
                     }
                 }
+                // A scan has pictures of pages and next to no text: read
+                // the pages with Tesseract, once (the `.ocr` mark says it
+                // was tried, so a PDF of photos is not read again).
+                let ocr_mark = dir.join(format!("{key}.ocr"));
+                let text_now = fs::read_to_string(&text_abs).unwrap_or_default();
+                if tools.tesseract && tools.pdftoppm && !ocr_mark.exists() && looks_scanned(&text_now, asset.pages) {
+                    let pages = asset
+                        .pages
+                        .unwrap_or(MAX_OCR_PAGES as i64)
+                        .clamp(1, MAX_OCR_PAGES as i64) as u32;
+                    let text = ocr_pdf(&abs_str, &dir, &key, pages);
+                    if !text.trim().is_empty() && fs::write(&text_abs, &text).is_ok() {
+                        asset.text = Some(rel_derived(&format!("{key}.txt")));
+                    }
+                    let _ = fs::write(&ocr_mark, "");
+                }
                 if tools.pdftoppm {
                     let stem = dir.join(&key);
                     let stem_str = stem.to_string_lossy().into_owned();
@@ -922,6 +946,56 @@ impl Vault {
     }
 }
 
+/// Scanned PDFs are read up to this many pages.
+pub const MAX_OCR_PAGES: u32 = 200;
+
+/// Whether a PDF's extracted text is too thin to be its real text: fewer
+/// than 20 letters or digits a page.
+pub fn looks_scanned(text: &str, pages: Option<i64>) -> bool {
+    let chars = text.chars().filter(|c| c.is_alphanumeric()).count();
+    chars < 20 * pages.unwrap_or(1).max(1) as usize
+}
+
+/// Read the first `pages` pages of a PDF with Tesseract, one page at a
+/// time (each rendered at 200 dpi, read, then deleted).
+fn ocr_pdf(pdf: &str, dir: &Path, key: &str, pages: u32) -> String {
+    let mut out = Vec::new();
+    for page in 1..=pages {
+        let stem = dir.join(format!("{key}-ocr"));
+        let png = dir.join(format!("{key}-ocr.png"));
+        let p = page.to_string();
+        let rendered = run(
+            "pdftoppm",
+            &[
+                "-png",
+                "-gray",
+                "-r",
+                "200",
+                "-f",
+                &p,
+                "-l",
+                &p,
+                "-singlefile",
+                pdf,
+                &stem.to_string_lossy(),
+            ],
+        )
+        .is_some()
+            && png.is_file();
+        if !rendered {
+            break;
+        }
+        if let Some(text) = run("tesseract", &[&png.to_string_lossy(), "-", "--psm", "3"]) {
+            let text = text.trim();
+            if !text.is_empty() {
+                out.push(text.to_string());
+            }
+        }
+        let _ = fs::remove_file(&png);
+    }
+    out.join("\n\n")
+}
+
 /// Write a JPEG thumbnail with ffmpeg, at most 480px wide.
 fn make_thumb(src: &str, dest: &Path, at: Option<&str>) -> bool {
     let dest_str = dest.to_string_lossy().into_owned();
@@ -967,6 +1041,38 @@ pub fn format_size(bytes: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn thin_pdf_text_counts_as_scanned() {
+        assert!(looks_scanned("", Some(3)));
+        assert!(looks_scanned("  1  \n\x0c 2 \n", Some(2)));
+        assert!(!looks_scanned(&"word ".repeat(30), Some(2)));
+        assert!(looks_scanned(&"word ".repeat(30), Some(10)));
+        assert!(!looks_scanned("A short but real page of text.", None));
+    }
+
+    /// Needs pdftoppm and tesseract; skipped where they are missing.
+    #[test]
+    fn scanned_pdfs_are_read_with_tesseract() {
+        let t = tools();
+        if !(t.pdftoppm && t.tesseract) {
+            eprintln!("skipped: pdftoppm or tesseract missing");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("attachments")).unwrap();
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/scanned.pdf");
+        fs::copy(&fixture, dir.path().join("attachments/scan.pdf")).unwrap();
+        let mut v = Vault::open(dir.path()).unwrap();
+        while !v.derive_assets(10).unwrap().is_empty() {}
+        let text = v.asset_text("attachments/scan.pdf").unwrap().unwrap_or_default();
+        assert!(text.contains("battery pack"), "{text}");
+        let hits = v.search_assets("fuse", 5).unwrap();
+        assert_eq!(hits.len(), 1);
+        // Read once: deriving again finds the mark and keeps the text.
+        let again = v.derive_asset("attachments/scan.pdf").unwrap();
+        assert!(again.text.is_some());
+    }
 
     #[test]
     fn vault_indexes_assets_references_and_search() {

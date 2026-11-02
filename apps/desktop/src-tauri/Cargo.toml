@@ -15,6 +15,12 @@ tauri-build = { version = "2", features = [] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-global-shortcut = "2"
+# Dictation (whisper.cpp) on desktops; phones use their keyboard's microphone.
+graphite-core = { path = "../../../core", features = ["dictation"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# To turn on microphone access in WebKitGTK, which is off by default.
+webkit2gtk = "2.0"
 
 [dependencies]
 graphite-core = { path = "../../../core" }

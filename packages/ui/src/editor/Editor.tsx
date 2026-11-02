@@ -81,6 +81,11 @@ export function NoteEditor(props: NoteEditorProps) {
       newDrawing: c.newDrawing && (() => contextRef.current?.newDrawing?.() ?? Promise.resolve(null)),
       readDrawing: c.readDrawing && ((src: string) => contextRef.current?.readDrawing?.(src) ?? Promise.reject(new Error('no drawings here'))),
       openFile: (src: string) => (contextRef.current?.openFile ?? callbacks.current.onOpenFile)?.(src),
+      dictation: c.dictation && {
+        prepare: () => contextRef.current?.dictation?.prepare() ?? Promise.resolve(false),
+        transcribe: (pcm: Int16Array) => contextRef.current?.dictation?.transcribe(pcm) ?? Promise.resolve(''),
+        onError: (m: string) => contextRef.current?.dictation?.onError?.(m),
+      },
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [docKey])

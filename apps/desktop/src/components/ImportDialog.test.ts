@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { Tools } from '../api'
 import { missingToolFor, videoToolsNote } from './ImportDialog'
 
-const tools = (over: Partial<Tools>): Tools => ({ ffmpeg: false, ffprobe: false, pdfinfo: false, pdftotext: false, pdftoppm: false, git: false, yt_dlp: false, deno: false, browser: false, ...over })
+const tools = (over: Partial<Tools>): Tools => ({ ffmpeg: false, ffprobe: false, pdfinfo: false, pdftotext: false, pdftoppm: false, git: false, yt_dlp: false, deno: false, browser: false, tesseract: false, ...over })
 
 describe('missingToolFor', () => {
   it('lets GitHub repositories through without git', () => {
